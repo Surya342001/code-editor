@@ -1,0 +1,243 @@
+// src/components/AI/AIPanel.jsx — Tabbed AI panel: Chat (RAG) · Git · Models
+import { useState, useRef, useEffect, useCallback } from 'react';
+import useEditorStore from '../../store/editorStore';
+import useProjectIndex from '../../store/projectIndex';
+import useRagStore from '../../store/ragStore';
+import GitPanel from './GitPanel';
+import ModelGuide from './ModelGuide';
+
+const OLLAMA = 'http://localhost:11434';
+
+function parseFileEdits(text) {
+  const edits = [];
+  const pattern = /FILE:\s*([^\n]+)\n```[a-zA-Z0-9_-]*\n([\s\S]*?)```/g;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    edits.push({ filePath: match[1].trim(), content: match[2].replace(/\n$/, '') });
+  }
+  return edits;
+}
+
+function isRunRequest(text) {
+  return /\b(run|start|launch|execute)\b[\s\S]*\b(project|app|server|this)\b/i.test(text)
+    || /^run this project$/i.test(text.trim());
+}
+
+function SearchResults({ results = [] }) {
+  const navigateTo = useEditorStore(s => s.navigateTo);
+  if (!results.length) return null;  if (!results.length) return null;  if (!results.length) return null;  if (!res-hidden bg-[#0d1117]">
+      <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-[#8b949e] border-b border-[#30363d]">Project matches</div>
+      {results.slice(0, 5).map((r, i) => (
+        <button key={`${r.path}:${r.line||1}:${i}`} onClick={() => navigateTo(r.path, r.line || 1)}
+          className="w-full text-left px-3 py-2 hover:bg-[#21262d] border-b border-[#21262d] last:border-b-0 transition-colors">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[#a78bfa] text-xs flex-shrink-0">{r.kind === 'symbol' ? 'ƒ' : 'file'}</span>
+            <span className="text-xs text-[#e6edf3] truncate">{r.name || r.relativePath}</span>
+            {r.line && <span className="text-[10px] text-[#484            rink-0">L{r.line}</span>}
+          </div>
+          <div className="text-[10px] text-[#8b949e] truncate mt-0.5">{r.relativePath}</div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function EditActions({ edits = [] }) {
+  const { applyFileEdit, showInlineDiff, tabs } = useEditorStore();
+  if (!edits.length) return null;
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      {edits.map((edit, i) => {
+        const openTab = tabs.find(t => t.path?.endsWith(edit.filePath) || t.path === edit.filePath);
+        return (
+          <button key={`${edit.filePath}:${i}`}
+            onClick={() => openTab ? showInlineDiff(openTab.content, edit.content, openTab.path, openTab.language) : applyFileEdit(edit.filePath, edit.content)}
+            className="px-3 py-2 bg-[#238636] hover:bg-[#2ea043] text-white text-xs rounded-lg text-left transition-colors flex items-center gap-2">
+            <span>✏️</span><span>Apply edit → {edit.filePath}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Message({ msg }) {
+  const isUser = msg.role === 'user';
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-3`}>
+      <div className={`max-w-[92%] rounded-xl px-3 py-2 text-sm break-words leading-relaxed
+        ${isUser ? 'bg-[#7c3aed] text-white rounded-br-sm' : 'bg-[#21262d] text-[#e6edf        ${isUser ? 'bg-[#7c3aed] text-white r
+        {msg.role === 'assistant' && msg.loading ? (
+          <span className="flex items-center gap-2 text-[#8b949e]">
+            <span className="animate-bounce">●</span>
+            <span className="animate-bounce" style={{ animationDelay:'0.15s' }}>●</span>
+            <span className="animate-bounce" style={{ animationDelay:'0.3s' }}>●</span>
+          </span>
+        ) : (
+          <pre className="whitespace-pre-wrap font-sans text-sm">{msg.content}</pre>
+        )}
+        {!isUser && <SearchResults results={msg.searchResults} />}
+        {!isUser && <EditAction        {!isUseits}         { <                   );
+}
+
+export default function AIPanel(export default function AIPanel(expomaexport deelectedModel, setSelectedModel,
+    tabs, activeTabId, currentFolder, detectAndRun,
+    pendingAIQuery, pendingAITab, clearAIQuery,
+  } = useEditorStore();
+
+  const { files, indexing, indexedFolder, buildIndex, semanticSearch, getContextForQuery, getSummary, getProjectTree } = useProjectIndex();
+  const ragStore = useRagStore();
+
+  const [aiTab,    setAiTab]    = useState('chat');
+  const [messages, setMessages] = useState([]);
+  const [input,    setInput]    = useState('');
+  const [sending,  setSending]  = useState(false);
+  const bottomRef = useRef(null);
+  const abortRef  = useRef(null);
+  const inputRef  = useRef(null);
+
+  const currentTab = tabs.find(t => t.id === activeTabId);
+  const hasIndex   = currentFolder && indexedFolder === currentFolder;
+  const hasRAG     = ragSto  const hasRAG     = ragSto  const hasRAG     = ragSto  const hasindexedFolder === currentFolder;
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  useEffect(() => {
+    if (pendingAIQuery) {
+      setAiTab(pendingAITab || 'chat');
+      setInput(pendingAIQuery);
+                                          => inputRe                    60);
+    }
+  }, [pendingAIQuery, pendingAITab, clearAIQuery]);
+
+  const ensureIndexed = useCallback(async () => {
+    if (currentFolder && (files.length === 0 || indexedFolder !== currentFolder) && !indexing) {
+      await buildInde      await buildInde      await bentFolder, fil      await buildInde      await buildInde    ]);
+
+  const buildRAGIndex = useCallback(async () => {
+    if (!currentFolder || !window.api) return;
+    const allFiles     const allFiles     const allive    const allFiles     const allFiles     const allive  ;
+                                                                      rrentFolder, ragStore]);
+
+  const explainProject = useCallback(async () => {
+    await ensureIndexed();
+    setMessages(prev =>     setMessages(prev =>     setMessages(prev =>     setMessages(prev =>     setMessages(prev etS    setMessages(project index yet.'}`,
+      searchResults: semanticSearch('main entry      searchResults: semervices       searchResults: semanticSearch('main entry      searchResults: seme
+  const runProject = useCallback(async () => {
+    setMessages(    setMessages(    setMessa.now(), role: 'assista    setMessages(    setMessages(    setMessa.now(), role: 'assista    setMessages(    setMessaete    setMessages(    setMessages(    setMessa.now(), role: 'assista    setMessages(    setMessages(    seim();
+    if (!trimmed || sending) return;
+
+    setMessages(prev =    setMessages(prev =    setMessages(prev = on    setMessages(prev =    setMessages(prev =    setMessages(prev = on    setMessages(prev =    setMe
+    await e    await e    await e    await e    await e    await e    await e    await e    await e    a   queryContext = await ragStore.getContext(trimmed, 6    await earchResults = se    await e    await e    await e    await e    await e    await e    await e    await e    await e    a   queryContext = await ragStore.getContext(trim    const asstMsg = { id: Date.now() + 1, role: 'assistant', content: '', loading: true, searchResults };
+    setMessages(prev => [...prev, asstMsg]);
+    setSending(true);
+
+    const systemPrompt = `You ar    const systemPrompt = `You ar    const systemPrompt = `You ar    const systemPrompt = `You ar    const systemPrompt = `You ar    const systemPrompt = `You ar    const systemPrompt = `You ar    const systemPrompt = `You ar    const systemPrompt = `You ar    const systeat    const systemPrompt = `Ylanguage
+<complete new file content>
+\`\`\`
+
+Project summary:
+${getSummary() || 'No indexed files yet.'}
+
+Project tree:
+${getProjectTree() || 'No tree available.'}
+
+Relevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coReleva}/apiRelevant code coRelevant code coRelevant coeaRelevant code coRelee':Relevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelevant code coRelorRelevant code coRelevantus}`);
+
+              ader =               ader =               ad = new TextDecoder();              ader =               ader = e)               ader =               ader =               ad = new TextDecoder();              ader =               ader = e)               ader =               ader =               ad = new TextDecoder();              ader =               ader = e)               ader =               ader =               ad = new TextDecoder();              ader =               ader = e)               ader =               ader =               ad = new TextDecoder();              ader =               ader = e)               ader =               ader =               ad = new TextDecoder();              ader =               ader = e)               ader =               ader =               ad = new TextDecoder();              ader =               ader = e)               ader =               ader =               ad = new TextDecoder();              ader =               ader = e)               ader =         ge}\n\nStart Ollama: ollama serve`, loading: false } : m));
+      }
+    } finally { setSending(false); abortRef.current = null; }
+  }, [currentTab, ensureIndexed, files.length, getContextForQuery, getProjectTree, getSummary,
+      hasRAG, input, messages, ragStore, runProject, selectedModel, semanticSearch, sending]);
+
+  const stop = () => { abortRef.current?.abort(); setSending(false); };
+
+  const quickActions = [
+    { label: 'Analyze project', run: explainProject,  disabled: !currentFolder },
+    { label: 'Run project',     run: runProject,       disabled: !currentFolder },
+    { label: 'Explain file',    run: () => send(`Explain the important functions in: ${currentTab?.path||''}`), disabled: !currentTab||!ollamaOnline },
+    { label: 'Find bugs',       run: () => send('Find likely bugs in the current file and project. Show exact files + fixes.'), disabled: !currentTab||!ollamaOnline },
+    { label: 'Refactor file',   run: () => send('Improve and refactor the active file. Return a full FILE: edit.'), disable    { label: 'Refactor file',   run: () => send('Improvst    {       { label: 'Refactor file',   run: () => send('Improve anda FILE: edit.'), disabled: !ollamaOnline },
+  ];
+
+  return (
+    <div className="flex flex-col h-    <div className="flex flex-col h-    <div className="flex flex-col h-    <div className="feen    <div className="flex flex-col h-    <div className="flex flex-colssName="flex items-center gap    <div className="flex flex-col h-    <div className="flex flex-col h-    <div      <div className="flex flex-col h-    <div className="flex flex-col h-    <div 'bg-red-400'}`} />
+          {hasRAG && <span className="text-xs bg-[#f0883e]/20 text-[#f0883e] px-1.5 py-0.5 rounded-full border border-[#f0883e]/30">�          {hasRAG && <span className="text-xs bg-[#f0883e]/20 text-[#f0883e] px-1.5 py-0.5 rounded-full border border-[#f0883e]/30">�          {hasRAG && <span cla             {hasRAG && <span className="text-xs bg-[#f0883e]/20 text-[#f0883e] px-1.5 py-0.5 rounded-full border border-[#f0883e]/30">�          {hasRAG && <span className="text-xs bg-[#f0883e]/20 text-[#f0883e] px-1.5 py-0.5 rounded-full border border-[#f0883e]/30">�          {hasRAG &&der-b border-[#30363d] flex-shrink-0">
+        {[['chat','💬 Chat'],['git','🌿 Git'],['models','📦 Models']].map(([id, label]) => (
+          <button key={id} onClick={() => setAiTab(id)}
+            className={`flex-1 py-1.5 text-xs font-medium transition-colors ${aiTab === id ? 'border-b-2 border-[#7c3aed] text-[#e6edf3]' : 'text-[#8b949e] hover:text-[#e6edf3]'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {aiTab === 'git'    && <div className="flex-1 overflow-hidden min-h-0"><GitPanel /></div>}
+      {aiTab === 'models' && <div className="flex-1 overflow-hidden min-h-0"><ModelGuide /></div>}
+
+      {aiTab === 'chat' && (
+        <>
+          {!ollamaOnline && (
+            <div className="mx-3 mt-2 p-2.5 bg-[#3a1a1a] border border-red-900/50 rounded text-xs text-red-300 flex-shrink-0">
+              Ollama offline — run: <code className="bg-black/30 px-1 rounded">ollama serve</code>
+            </div>
+          )}
+
+          {/* RAG bar */}
+          <div className="px-3 py-2 border-b border-[#30363d] flex-shrink-0 flex items-center gap-2">
+            {hasRAG ? (
+              <span className="text-xs text-[#f0883e]">🧠 {ragStore.chunks.length} chunks</span>
+            ) : ragStore.building ? (
+              <div className="flex-1">
+                <div className="h-1 bg-[#21262d] rounded-full overflow-hidden">
+                  <div className="h-full b                  tion-all" styl           `${ragStore.progress}%` }} />
+                </div>
+                <span className="text-xs text-[#8b949e]">RAG indexing… {ragStore.progress}%</span>
+              </div>
+            ) : (
+              <span className="text-xs text-[#484f58]">
+                {ragS                {ragS                {ragS                {ragS                {ragS                {ragS                      )}
+            <div className="flex-1" />
+            {!hasRAG && !ragStore.building && ragStore.embedModelAvailable && currentFolder && (
+              <button onClick={buildRAGIndex}
+                className="text-xs px-2 py-0.5 bg-[#f0883e]/20 text-[#f0883e] hover:bg-[#f0883e]/30 r                className="text-xs px-2 py-0.5 bg-[#f0883e]/20 text-[#f0883e] hover:bg-[#f0883e]/utton>
+            )}
+          </div>
+
+          {/* Quick actions */}
+          <div className="px-3 pt-2 pb-2 border-b border-[#30363d] flex-shrink-0">
+            <div className="grid grid-cols-2 gap-1.5">
+              {quickActions.map(a => (
+                <button k                <but={a.run} disabled={a.disabled || sending}
+                  className="text-xs px-2 py-1.5 bg-[#21262d]                 ounded-lg hover:bg-[#30                  className="text-xs px-2 py-1.5 bg-0 disabled:cursor-not-allowed">
+                  {a.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5            <p className="mt>
+                                                                                                         e                                            </                                                                                                         e                                            </                                                   nt           ext-               sm text-center px-4">
+                <span className="text-3xl mb-2">💬</span>
+                <p>Ask about any function, file, bug, or change.</p>
+                <p className="text-xs mt-2">Select code in editor → right-click → Ask AI</p>
+              </div>
+            )}
+            {messages.map((m, i) => <Message key={m.id || i} msg={m} />)}
+            <div ref={bottomRef} />
+          </div>
+
+          {/* Input */}
+          <div className="flex-shrink-0 border-t border-[#30363d] p-3">
+            {messages.length >            {mes              {messck={() => setMessages([])} className="text-xs text-[#484f58] hov            {messages.length >            {mes              {messck={() => setMessages([])} className="text-xs text-[#484f58] hov            {messages.length >            {mes              {messck={() => setMessages([])} className="text-xs text-[#484f58] hov            {messages.length >            {mes              {messck={() => setMessages([])} className="text-xs text-[#484f58] hov            {message context…' : 'Ask about your project…'}
+                rows={2}
+                className="flex-1 bg-[#0d1117] text-[#e6edf3]                 className="flex-1 bg-[#0d1117] text-[#e6edf3]                 className="flex-1no                clac3       ansition                className="flex-1 bg-[#0d1117] text-[#e6edf3]                   {sending
+                  ? <button onClick={st               px-3 py-2                  ? <button onClick={st               px-3 py-2   button>
+                  : <button onClick={() => send(input)} disabled={!input.trim() || (!ollamaOnline && !isRunRequest(input))}
+                      className="px-3 py-2 bg-[#7c3aed] text-white rounded-lg text-xs hover:bg-[#6d28d9] disabled:opacity-40 disabled:cursor-not-allowed">Send</button>
+                }
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

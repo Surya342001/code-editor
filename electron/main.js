@@ -249,3 +249,83 @@ ipcMain.handle('terminal:create', (_, id, cols, rows, cwd) => {
 ipcMain.handle('terminal:write',  (_, id, data)       => { ptyProcs[id]?.write(data); });
 ipcMain.handle('terminal:resize', (_, id, cols, rows)  => { ptyProcs[id]?.resize(cols, rows); });
 ipcMain.handle('terminal:kill',   (_, id)              => { ptyProcs[id]?.kill(); delete ptyProcs[id]; });
+
+// ─── IPC : Git ───────────────────────────────────────────────────────────────
+const { execFile } = require('child_process');
+
+function git(args, cwd) {
+  return new Promise((resolve, reject) => {
+    execFile('git', args, { cwd, encoding: 'utf-8', maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err && !stdout.trim()) reject(new Error((stderr || err.message).trim()));
+      else resolve(stdout.trim());
+    });
+  });
+}
+
+ipcMain.handle('git:isRepo', async (_, dir) => {
+  try { await git(['rev-parse', '--git-dir'], dir); return true; }
+  catch { return false; }
+});
+
+ipcMain.handle('git:status', async (_, dir) => {
+  try {
+    const raw    = await git(['status', '--porcelain', '-u'], dir);
+    const branch = await git(['branch', '--show-current'], dir).catch(() => 'HEAD');
+    const ahead  = await git(['rev-list', '--count', '@{u}..HEAD'], dir).catch(() => '0');
+    const behind = await git(['rev-list', '--count', 'HEAD..@{u}'], dir).catch(() => '0');
+    const files  = raw.split('\n').filter(Boolean).map(l => ({
+      xy: l.slice(0, 2), path: l.slice(3).trim()
+    }));
+    return { ok: true, branch, ahead: +ahead, behind: +behind, files };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:diff', async (_, dir, filePath) => {
+  try {
+    const unified = await git(filePath
+      ? ['diff', 'HEAD', '--', filePath]
+      : ['diff', 'HEAD'], dir).catch(() => '');
+    const staged = await git(['diff', '--cached',
+      ...(filePath ? ['--', filePath] : [])], dir).catch(() => '');
+    return { ok: true, diff: unified || staged || '(no diff)' };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:log', async (_, dir, n) => {
+  try {
+    const log = await git(['log', '--oneline', `--decorate`, `-${n || 15}`], dir);
+    return { ok: true, log };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:stageAll', async (_, dir) => {
+  try { await git(['add', '-A'], dir); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:stage', async (_, dir, filePath) => {
+  try { await git(['add', filePath], dir); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:unstage', async (_, dir, filePath) => {
+  try { await git(['restore', '--staged', filePath], dir); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:commit', async (_, dir, message) => {
+  try { await git(['commit', '-m', message], dir); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:push', async (_, dir) => {
+  try { const out = await git(['push'], dir); return { ok: true, out }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:discard', async (_, dir, filePath) => {
+  try {
+    await git(['checkout', '--', filePath], dir);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});

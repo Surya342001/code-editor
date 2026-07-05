@@ -39,4 +39,16 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on(ch, fn);
     return () => ipcRenderer.removeListener(ch, fn);
   },
+
+  // ── Git ──────────────────────────────────────────────────────────────────
+  gitIsRepo:   (dir)          => ipcRenderer.invoke('git:isRepo',  dir),
+  gitStatus:   (dir)          => ipcRenderer.invoke('git:status',  dir),
+  gitDiff:     (dir, fp)      => ipcRenderer.invoke('git:diff',    dir, fp),
+  gitLog:      (dir, n)       => ipcRenderer.invoke('git:log',     dir, n),
+  gitStageAll: (dir)          => ipcRenderer.invoke('git:stageAll',dir),
+  gitStage:    (dir, fp)      => ipcRenderer.invoke('git:stage',   dir, fp),
+  gitUnstage:  (dir, fp)      => ipcRenderer.invoke('git:unstage', dir, fp),
+  gitCommit:   (dir, msg)     => ipcRenderer.invoke('git:commit',  dir, msg),
+  gitPush:     (dir)          => ipcRenderer.invoke('git:push',    dir),
+  gitDiscard:  (dir, fp)      => ipcRenderer.invoke('git:discard', dir, fp),
 });

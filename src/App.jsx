@@ -4,11 +4,13 @@ import FileExplorer   from './components/Sidebar/FileExplorer';
 import SearchPanel    from './components/Sidebar/SearchPanel';
 import EditorArea     from './components/Editor/EditorArea';
 import AIPanel        from './components/AI/AIPanel';
+import InlineDiff     from './components/AI/InlineDiff';
 import StatusBar      from './components/StatusBar';
 import CommandPalette from './components/CommandPalette';
 import Toasts         from './components/Toasts';
 import useEditorStore from './store/editorStore';
 import useProjectIndex from './store/projectIndex';
+import useRagStore    from './store/ragStore';
 
 const OLLAMA = 'http://localhost:11434';
 
@@ -22,11 +24,15 @@ export default function App() {
   } = useEditorStore();
 
   const buildIndex = useProjectIndex(s => s.buildIndex);
+  const checkRagModel = useRagStore(s => s.checkModel);
 
   // Re-index when folder changes
   useEffect(() => {
     if (currentFolder) buildIndex(currentFolder);
   }, [currentFolder, buildIndex]);
+
+  // Check whether nomic-embed-text is available at startup
+  useEffect(() => { checkRagModel(); }, []);
 
   // Detect how the project should run as soon as a folder opens.
   useEffect(() => {
@@ -85,7 +91,7 @@ export default function App() {
             className="flex-shrink-0 bg-[#161b22] border-r border-[#30363d] overflow-hidden flex flex-col"
           >
             {activePanel === 'explorer' && <FileExplorer />}
-            {activePanel === 'search' && <SearchPanel />}
+            {activePanel === 'search'   && <SearchPanel />}
           </aside>
         )}
 
@@ -113,6 +119,9 @@ export default function App() {
 
       {/* Toast notifications */}
       <Toasts />
+
+      {/* Inline diff overlay */}
+      <InlineDiff />
     </div>
   );
 }

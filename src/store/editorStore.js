@@ -142,6 +142,7 @@ const useEditorStore = create((set, get) => ({
   toggleSidebar:  () => set(s => ({ showSidebar: !s.showSidebar })),
   toggleTerminal: () => set(s => ({ showTerminal: !s.showTerminal })),
   toggleAIPanel:  () => set(s => ({ showAIPanel: !s.showAIPanel })),
+  setShowAIPanel: (v) => set({ showAIPanel: v }),
   setActivePanel: (p) => set(s => ({
     activePanel: s.activePanel === p ? null : p,
     showSidebar: s.activePanel === p ? false : true,
@@ -203,6 +204,24 @@ const useEditorStore = create((set, get) => ({
   setOllamaModels: (models) => set({ ollamaModels: models }),
   setSelectedModel: (m) => set({ selectedModel: m }),
   setOllamaOnline: (v) => set({ ollamaOnline: v }),
+
+  // ── Inline AI query (from editor selection → AI Panel) ────────────────
+  pendingAIQuery: null,    // { text, context } sent from CodeEditor to AIPanel
+  pendingAITab: 'chat',    // which AI tab to auto-switch to
+  setAIQuery: (text, tab = 'chat') => set({ pendingAIQuery: text, pendingAITab: tab, showAIPanel: true }),
+  clearAIQuery: () => set({ pendingAIQuery: null }),
+
+  // ── Inline Diff (accept/reject AI edits with diff preview) ────────────
+  inlineDiff: null,   // { original, proposed, filePath, language }
+  showInlineDiff: (original, proposed, filePath, language) =>
+    set({ inlineDiff: { original, proposed, filePath, language } }),
+  acceptInlineDiff: async () => {
+    const { inlineDiff, applyFileEdit, toast } = get();
+    if (!inlineDiff) return;
+    await applyFileEdit(inlineDiff.filePath, inlineDiff.proposed);
+    set({ inlineDiff: null });
+  },
+  rejectInlineDiff: () => set({ inlineDiff: null }),
 }));
 
 export default useEditorStore;

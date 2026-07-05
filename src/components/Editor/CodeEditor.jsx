@@ -191,6 +191,87 @@ Insert at cursor:`,
       useEditorStore.getState().toggleTerminal();
     });
 
+    // ── AI selection context menu actions ──────────────────────────────
+    const getSelection = () => {
+      const sel = editor.getSelection();
+      if (!sel || sel.isEmpty()) return '';
+      return editor.getModel()?.getValueInRange(sel) || '';
+    };
+
+    // "Ask AI about selection" — Ctrl/Cmd+Shift+A
+    editor.addAction({
+      id: 'ai-ask-selection',
+      label: '🤖 Ask AI about selection',
+      keybindings: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyA],
+      contextMenuGroupId: '9_cutcopypaste',
+      contextMenuOrder: 10,
+      run: () => {
+        const text = getSelection();
+        const { tabs, activeTabId: tid, setAIQuery } = useEditorStore.getState();
+        const tab = tabs.find(t => t.id === tid);
+        const lang = tab?.language || 'code';
+        if (text.trim()) {
+          setAIQuery(`Explain this ${lang} code and how it works:\n\`\`\`${lang}\n${text}\n\`\`\``, 'chat');
+        }
+      },
+    });
+
+    // "Refactor selection" — Ctrl/Cmd+Shift+R
+    editor.addAction({
+      id: 'ai-refactor-selection',
+      label: '✨ Refactor with AI',
+      keybindings: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyR],
+      contextMenuGroupId: '9_cutcopypaste',
+      contextMenuOrder: 11,
+      run: () => {
+        const text = getSelection();
+        const { tabs, activeTabId: tid, setAIQuery } = useEditorStore.getState();
+        const tab = tabs.find(t => t.id === tid);
+        const lang = tab?.language || 'code';
+        const path = tab?.path || 'this file';
+        if (text.trim()) {
+          setAIQuery(`Refactor and improve this code. Return a FILE: edit for ${path}:\n\`\`\`${lang}\n${text}\n\`\`\``, 'chat');
+        }
+      },
+    });
+
+    // "Find bugs in selection" — Ctrl/Cmd+Shift+B  
+    editor.addAction({
+      id: 'ai-bugs-selection',
+      label: '🐛 Find bugs in selection',
+      keybindings: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyD],
+      contextMenuGroupId: '9_cutcopypaste',
+      contextMenuOrder: 12,
+      run: () => {
+        const text = getSelection();
+        const { tabs, activeTabId: tid, setAIQuery } = useEditorStore.getState();
+        const tab = tabs.find(t => t.id === tid);
+        const lang = tab?.language || 'code';
+        if (text.trim()) {
+          setAIQuery(`Find bugs and issues in this code. Be specific about line numbers and what to fix:\n\`\`\`${lang}\n${text}\n\`\`\``, 'chat');
+        }
+      },
+    });
+
+    // "Write tests for selection"
+    editor.addAction({
+      id: 'ai-tests-selection',
+      label: '🧪 Write tests for selection',
+      keybindings: [],
+      contextMenuGroupId: '9_cutcopypaste',
+      contextMenuOrder: 13,
+      run: () => {
+        const text = getSelection();
+        const { tabs, activeTabId: tid, setAIQuery } = useEditorStore.getState();
+        const tab = tabs.find(t => t.id === tid);
+        const lang = tab?.language || 'code';
+        const path = tab?.path || 'this file';
+        if (text.trim()) {
+          setAIQuery(`Write comprehensive tests for this code. Return a FILE: edit for the test file:\n\`\`\`${lang}\n${text}\n\`\`\``, 'chat');
+        }
+      },
+    });
+
     editor.focus();
   }, [saveTab]);
 
