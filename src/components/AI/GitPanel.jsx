@@ -1,36 +1,78 @@
-// src/components/AI/GitPanel.jsx — Aider-style Git panel with AI commit messages
+// src/components/AI/GitPanel.jsx — Full Git Desktop panel (status, branches, stash, remotes)
 import { useState, useEffect, useCallback } from 'react';
 import useEditorStore from '../../store/editorStore';
 
 const OLLAMA = 'http://localhost:11434';
 
-// Status code → human label + color
-function fileStatus(xy) {
+function statusMeta(xy) {
   const s = xy?.trim() || '?';
-  if (s === 'M')  return { label: 'Modified',  color: '#e3b341' };
-  if (s === 'A')  return { label: 'Added',     color: '#3fb950' };
-  if (s === 'D')  return { label: 'Deleted',   color: '#f85149' };
-  if (s === '?')  return { label: 'Untracked', color: '#8b949e' };
-  if (s === 'R')  return { label: 'Renamed',   color: '#79c0ff' };
-  if (s === 'C')  return { label: 'Copied',    color: '#79c0ff' };
-  return          { label: s,          color: '#8b949e' };
+  if (s === 'M') return { label: 'M', color: '#e3b341', title: 'Modified'  };
+  if (s === 'A') return { label: 'A', color: '#3fb950', title: 'Added'     };
+  if (s === 'D') return { label: 'D', color: '#f85149', title: 'Deleted'   };
+  if (s === '?') return { label: '?', color: '#8b949e', title: 'Untracked' };
+  if (s === 'R') return { label: 'R', color: '#79c0ff', title: 'Renamed'   };
+  if (s === 'C') return { label: 'C', color: '#79c0ff', title: 'Copied'    };
+  if (s === 'U') return { label: 'U', color: '#ff7b72', title: 'Conflict'  };
+  return                { label: s,   color: '#8b949e', title: s           };
+}
+
+// Small reusable button
+function Btn({ onClick, disabled, children, className = '' }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`text-xs px-2 py-1 rounded border border-[#30363d] bg-[#21262d] hover:bg-[#30363d]
+        text-[#e6edf3] disabled:opacity-40 transition-colors ${className}`}
+    >
+      {children}
+    </button>
+  );
 }
 
 export default function GitPanel() {
-  const { currentFolder, toast, showTerminal, toggleTerminal, terminalSender } = useEditorStore();
+  const { currentFolder, toast } = useEditorStore();
 
-  const [status,      setStatus]      = useState(null);   // { branch, files, ahead, behind }
-  const [log,         setLog]         = useState('');
-  const [diff,        setDiff]        = useState('');
-  const [diffFile,    setDiffFile]    = useState(null);   // null = all
-  const [isRepo,      setIsRepo]      = useState(false);
-  const [loading,     setLoading]     = useState(false);
-  const [committing,  setCommitting]  = useState(false);
-  const [commitMsg,   setCommitMsg]   = useState('');
-  const [generating,  setGenerating]  = useState(false);
-  const [tab,         setTab]         = useState('changes'); // 'changes' | 'diff' | 'log'
-  const [selected,    setSelected]    = useState(new Set()); // selected file paths for staging
+  // ── core state
+  const [isRepo,   setIsRepo]   = useState(false);
+  const [loading,  setLoading]  = useState(false);
+  const [tab,      setTab]      = useState('changes');
 
+  // changes
+  const [status,   setStatus]   = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [commitMsg,  setCommitMsg]  = useState('');
+  const [committing, setCommitting] = useState(false);
+  const [generating, setGenerating] = useState(false);
+
+  // diff
+  const [diff,     setDiff]     = useState('');
+  const [diffFile, setDiffFile] = useState(null);
+
+  // branches
+  const [branches,  setBranches]  = useState({ branches: [], remotes: [] });
+  const [newBranch, setNewBranch] = useState('');
+  const [branchBusy, setBranchBusy] = useState(false);
+
+  // history
+  const [log, setLog] = useState('');
+
+  // stash
+  const [stashes,  setStashes]  = useState([]);
+  const [stashMsg, setStashMsg] = useState('');
+
+  // remotes
+  const [remotes,       setRemotes]       = useState([]);
+  const [showRemoteForm, setShowRemoteForm] = useState(false);
+  const [remoteName,    setRemoteName]    = useState('origin');
+  const [remoteUrl,     setRemoteUrl]     = useState('');
+
+  // action busy states
+  const [pushing,  setPushing]  = useState(false);
+  const [pulling,  setPulling]  = useState(false);
+  const [fetching, setFetching] = useState(false);
+
+  // ── data load
   const refresh = useCallback(async () => {
     if (!currentFolder || !window.api) return;
     setLoading(true);
@@ -39,270 +81,631 @@ export default function GitPanel() {
       setIsRepo(repo);
       if (!repo) return;
 
-      const [s, l] = await Promise.all([
+      const [s, l, br, st, rm] = await Promise.all([
         window.api.gitStatus(currentFolder),
-        window.api.gitLog(currentFolder, 15),
+        window.api.gitLog(currentFolder, 30),
+        window.api.gitBranches(currentFolder),
+        window.api.gitStashList(currentFolder),
+        window.api.gitRemotes(currentFolder),
       ]);
-      if (s.ok)  setStatus(s);
+      if (s.ok)  { setStatus(s); setSelected(new Set(s.files.map(f => f.path))); }
       if (l.ok)  setLog(l.log);
-
-      // Auto-select all changed files
-      if (s.ok) setSelected(new Set(s.files.map(f => f.path)));
+      if (br.ok) setBranches(br);
+      if (st.ok) setStashes(st.stashes);
+      if (rm.ok) setRemotes(rm.remotes);
     } finally { setLoading(false); }
   }, [currentFolder]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const loadDiff = async (filePath = null) => {
+  // ── diff
+  const loadDiff = async (fp = null) => {
     if (!currentFolder || !window.api) return;
-    setDiffFile(filePath);
-    const r = await window.api.gitDiff(currentFolder, filePath);
-    setDiff(r.ok ? r.diff : r.error);
+    setDiffFile(fp);
+    const r = await window.api.gitDiff(currentFolder, fp);
+    setDiff(r.ok ? r.diff : r.error || '');
     setTab('diff');
   };
 
-  const stageAll = async () => {
-    if (!currentFolder || !window.api) return;
-    const r = await window.api.gitStageAll(currentFolder);
-    if (r.ok) { toast('Staged all changes', 'success'); await refresh(); }
+  // ── remote actions
+  const doPull = async () => {
+    if (pulling) return;
+    setPulling(true);
+    toast('Pulling…', 'info');
+    const r = await window.api.gitPull(currentFolder);
+    setPulling(false);
+    if (r.ok) { toast('Pulled ✓', 'success'); refresh(); }
     else toast(r.error, 'error');
   };
 
+  const doPush = async () => {
+    if (pushing) return;
+    setPushing(true);
+    toast('Pushing…', 'info');
+    const r = await window.api.gitPush(currentFolder);
+    setPushing(false);
+    if (r.ok) toast('Pushed ✓', 'success');
+    else toast(r.error, 'error');
+  };
+
+  const doFetch = async () => {
+    if (fetching) return;
+    setFetching(true);
+    toast('Fetching…', 'info');
+    const r = await window.api.gitFetch(currentFolder);
+    setFetching(false);
+    if (r.ok) { toast('Fetched ✓', 'success'); refresh(); }
+    else toast(r.error, 'error');
+  };
+
+  // ── staging
   const stageSelected = async () => {
-    if (!currentFolder || !window.api || selected.size === 0) return;
-    for (const fp of selected) {
-      await window.api.gitStage(currentFolder, fp);
-    }
+    if (!selected.size) return;
+    for (const fp of selected) await window.api.gitStage(currentFolder, fp);
     toast(`Staged ${selected.size} file(s)`, 'success');
-    await refresh();
+    refresh();
   };
 
   const discard = async (fp) => {
-    if (!window.api || !window.confirm(`Discard changes to ${fp}?`)) return;
+    if (!window.confirm(`Discard changes to ${fp}?`)) return;
     const r = await window.api.gitDiscard(currentFolder, fp);
-    if (r.ok) { toast(`Discarded ${fp}`, 'success'); await refresh(); }
+    if (r.ok) { toast(`Discarded ${fp}`, 'success'); refresh(); }
     else toast(r.error, 'error');
   };
 
-  const generateCommitMessage = async () => {
+  // ── commit
+  const generateCommitMsg = async () => {
     if (!status?.files?.length) return;
     setGenerating(true);
     setCommitMsg('');
     try {
-      // Get diff to give AI context
       const d = await window.api.gitDiff(currentFolder);
-      const diffContext = d.ok ? d.diff.slice(0, 3000) : '';
+      const diffCtx  = d.ok ? d.diff.slice(0, 3000) : '';
       const fileList = status.files.map(f => `${f.xy} ${f.path}`).join('\n');
-
       const res = await fetch(`${OLLAMA}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: useEditorStore.getState().selectedModel || 'codellama',
-          prompt: `Generate a concise git commit message (imperative mood, ≤72 chars) for these changes:\n\nFiles changed:\n${fileList}\n\nDiff (first 3000 chars):\n${diffContext}\n\nReturn ONLY the commit message, no quotes, no explanation.`,
+          prompt: `Write a concise git commit message (≤72 chars, imperative mood) for:\n\nFiles:\n${fileList}\n\nDiff:\n${diffCtx}\n\nReturn ONLY the commit message.`,
           stream: false,
           options: { temperature: 0.3, num_predict: 80 },
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setCommitMsg((data.response || '').trim());
-      }
+      if (res.ok) setCommitMsg(((await res.json()).response || '').trim());
     } catch (e) { toast('AI error: ' + e.message, 'error'); }
     finally { setGenerating(false); }
   };
 
   const doCommit = async () => {
-    if (!commitMsg.trim()) { toast('Commit message is empty', 'warn'); return; }
+    if (!commitMsg.trim()) { toast('Enter a commit message', 'warn'); return; }
     setCommitting(true);
     try {
-      // Stage all first if nothing is staged
       await window.api.gitStageAll(currentFolder);
       const r = await window.api.gitCommit(currentFolder, commitMsg.trim());
-      if (r.ok) {
-        toast('Committed ✓', 'success');
-        setCommitMsg('');
-        await refresh();
-      } else toast(r.error, 'error');
+      if (r.ok) { toast('Committed ✓', 'success'); setCommitMsg(''); refresh(); }
+      else toast(r.error, 'error');
     } finally { setCommitting(false); }
   };
 
-  const doPush = async () => {
-    if (!currentFolder || !window.api) return;
-    toast('Pushing…', 'info');
-    const r = await window.api.gitPush(currentFolder);
-    if (r.ok) toast('Pushed ✓', 'success');
+  // ── branches
+  const switchBranch = async (name) => {
+    setBranchBusy(true);
+    const r = await window.api.gitSwitchBranch(currentFolder, name);
+    setBranchBusy(false);
+    if (r.ok) { toast(`Switched to ${name}`, 'success'); refresh(); }
     else toast(r.error, 'error');
   };
 
-  const runGitCmd = (cmd) => {
-    if (!showTerminal) toggleTerminal();
-    const send = () => {
-      const sender = terminalSender || useEditorStore.getState().terminalSender;
-      if (sender) sender(`cd "${currentFolder}" && ${cmd}\r`);
-      else setTimeout(send, 300);
-    };
-    setTimeout(send, 400);
+  const createBranch = async () => {
+    if (!newBranch.trim()) return;
+    setBranchBusy(true);
+    const r = await window.api.gitCreateBranch(currentFolder, newBranch.trim());
+    setBranchBusy(false);
+    if (r.ok) { toast(`Created → ${newBranch}`, 'success'); setNewBranch(''); refresh(); }
+    else toast(r.error, 'error');
   };
 
+  const deleteBranch = async (name) => {
+    if (!window.confirm(`Delete branch "${name}"?`)) return;
+    const r = await window.api.gitDeleteBranch(currentFolder, name, false);
+    if (r.ok) { toast(`Deleted ${name}`, 'success'); refresh(); return; }
+    if (window.confirm(`Force delete "${name}"? Unmerged commits will be lost.`)) {
+      const r2 = await window.api.gitDeleteBranch(currentFolder, name, true);
+      if (r2.ok) { toast(`Force deleted ${name}`, 'success'); refresh(); }
+      else toast(r2.error, 'error');
+    }
+  };
+
+  // ── stash
+  const doStash = async () => {
+    const r = await window.api.gitStash(currentFolder, stashMsg.trim() || undefined);
+    if (r.ok) { toast('Stashed ✓', 'success'); setStashMsg(''); refresh(); }
+    else toast(r.error, 'error');
+  };
+
+  const doStashPop = async () => {
+    const r = await window.api.gitStashPop(currentFolder);
+    if (r.ok) { toast('Stash applied ✓', 'success'); refresh(); }
+    else toast(r.error, 'error');
+  };
+
+  const doStashDrop = async (idx) => {
+    if (!window.confirm('Drop this stash entry?')) return;
+    const r = await window.api.gitStashDrop(currentFolder, idx);
+    if (r.ok) { toast('Stash dropped', 'success'); refresh(); }
+    else toast(r.error, 'error');
+  };
+
+  // ── remote add
+  const addRemote = async () => {
+    if (!remoteName.trim() || !remoteUrl.trim()) return;
+    const r = await window.api.gitAddRemote(currentFolder, remoteName.trim(), remoteUrl.trim());
+    if (r.ok) {
+      toast(`Remote "${remoteName}" added ✓`, 'success');
+      setRemoteUrl(''); setShowRemoteForm(false); refresh();
+    } else toast(r.error, 'error');
+  };
+
+  // ── init repo
+  const initRepo = async () => {
+    const r = await window.api.gitInit(currentFolder);
+    if (r.ok) { toast('Initialized git repo ✓', 'success'); refresh(); }
+    else toast(r.error, 'error');
+  };
+
+  // ── guards
   if (!currentFolder) {
-    return <div className="p-4 text-[#8b949e] text-sm">Open a folder to use Git features.</div>;
+    return <div className="p-4 text-[#8b949e] text-sm">Open a folder to use Git.</div>;
   }
-
   if (loading) {
-    return <div className="p-4 text-[#8b949e] text-sm animate-pulse">Loading git status…</div>;
+    return (
+      <div className="p-4 text-[#8b949e] text-sm flex items-center gap-2">
+        <span className="inline-block animate-spin">↻</span> Loading…
+      </div>
+    );
   }
-
   if (!isRepo) {
     return (
-      <div className="p-4 space-y-3">
-        <p className="text-[#8b949e] text-sm">Not a git repository.</p>
+      <div className="p-6 flex flex-col items-center gap-4">
+        <div className="text-5xl">📁</div>
+        <p className="text-[#8b949e] text-sm text-center">Not a git repository.</p>
         <button
-          onClick={() => runGitCmd('git init')}
-          className="w-full py-1.5 px-3 bg-[#238636] hover:bg-[#2ea043] text-white text-xs rounded transition-colors"
+          onClick={initRepo}
+          className="px-4 py-2 bg-[#238636] hover:bg-[#2ea043] text-white text-sm rounded-lg transition-colors w-full"
         >
-          git init
+          Initialize Repository
         </button>
       </div>
     );
   }
 
-  const untracked = status?.files?.filter(f => f.xy?.trim() === '?') ?? [];
-  const changed   = status?.files?.filter(f => f.xy?.trim() !== '?') ?? [];
+  const allFiles = status?.files ?? [];
+
+  const TABS = [
+    { id: 'changes',  label: `Changes ${allFiles.length > 0 ? `(${allFiles.length})` : '✓'}` },
+    { id: 'diff',     label: 'Diff' },
+    { id: 'branches', label: `Branches (${branches.branches?.length ?? 0})` },
+    { id: 'history',  label: 'History' },
+    { id: 'stash',    label: `Stash (${stashes.length})` },
+  ];
 
   return (
-    <div className="flex flex-col h-full overflow-hidden text-sm">
-      {/* Branch bar */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#30363d] bg-[#161b22] flex-shrink-0">
-        <span className="text-[#3fb950] font-mono text-xs">⎇ {status?.branch || '…'}</span>
-        {status?.ahead  > 0 && <span className="text-[#e3b341] text-xs">↑{status.ahead}</span>}
-        {status?.behind > 0 && <span className="text-[#f85149] text-xs">↓{status.behind}</span>}
-        <div className="flex-1" />
-        <button onClick={refresh} title="Refresh" className="text-[#8b949e] hover:text-[#e6edf3] text-base">↻</button>
-        <button onClick={doPush}  title="Push" className="text-[#8b949e] hover:text-[#79c0ff] text-xs px-1.5 py-0.5 border border-[#30363d] rounded">↑ push</button>
+    <div className="flex flex-col h-full overflow-hidden text-xs">
+
+      {/* ── Header: branch + action buttons ── */}
+      <div className="flex-shrink-0 bg-[#161b22] border-b border-[#30363d]">
+        <div className="flex items-center gap-2 px-3 pt-2 pb-1">
+          <span className="text-[#3fb950] font-mono font-semibold text-xs">⎇ {status?.branch || '…'}</span>
+          {(status?.ahead  ?? 0) > 0 && (
+            <span className="text-[#e3b341] text-[10px] bg-[#e3b34118] px-1.5 py-0.5 rounded">↑{status.ahead} ahead</span>
+          )}
+          {(status?.behind ?? 0) > 0 && (
+            <span className="text-[#f85149] text-[10px] bg-[#f8514918] px-1.5 py-0.5 rounded">↓{status.behind} behind</span>
+          )}
+          <div className="flex-1" />
+          <button
+            onClick={refresh}
+            title="Refresh"
+            className="text-[#8b949e] hover:text-[#e6edf3] text-sm px-1 transition-colors"
+          >↻</button>
+        </div>
+        <div className="flex gap-1.5 px-3 pb-2">
+          <button
+            onClick={doFetch}
+            disabled={fetching}
+            className="flex-1 py-1 text-[10px] bg-[#21262d] hover:bg-[#30363d] border border-[#30363d]
+              text-[#e6edf3] rounded disabled:opacity-40 transition-colors"
+          >
+            {fetching ? '⏳' : '⟳'} Fetch
+          </button>
+          <button
+            onClick={doPull}
+            disabled={pulling}
+            className="flex-1 py-1 text-[10px] bg-[#21262d] hover:bg-[#30363d] border border-[#30363d]
+              text-[#e6edf3] rounded disabled:opacity-40 transition-colors"
+          >
+            {pulling ? '⏳' : '↓'} Pull
+          </button>
+          <button
+            onClick={doPush}
+            disabled={pushing}
+            className="flex-1 py-1 text-[10px] bg-[#7c3aed] hover:bg-[#6d28d9]
+              text-white rounded disabled:opacity-40 transition-colors font-semibold"
+          >
+            {pushing ? '⏳' : '↑'} Push
+          </button>
+        </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex border-b border-[#30363d] flex-shrink-0">
-        {[['changes', `Changes (${status?.files?.length ?? 0})`], ['diff','Diff'], ['log','Log']].map(([id, label]) => (
+      {/* ── Tab bar ── */}
+      <div className="flex border-b border-[#30363d] bg-[#0d1117] flex-shrink-0 overflow-x-auto">
+        {TABS.map(({ id, label }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`flex-1 py-1.5 text-xs transition-colors ${tab === id ? 'border-b-2 border-[#7c3aed] text-[#e6edf3]' : 'text-[#8b949e] hover:text-[#e6edf3]'}`}
+            className={`flex-shrink-0 px-3 py-1.5 text-[10px] transition-colors whitespace-nowrap
+              ${tab === id
+                ? 'border-b-2 border-[#7c3aed] text-[#e6edf3]'
+                : 'text-[#8b949e] hover:text-[#e6edf3]'
+              }`}
           >
             {label}
           </button>
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0">
-        {/* ── Changes tab ── */}
+      {/* ── Content ── */}
+      <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
+
+        {/* ╔══ CHANGES ══╗ */}
         {tab === 'changes' && (
-          <div className="p-2 space-y-1">
-            {status?.files?.length === 0 && (
-              <p className="text-[#8b949e] text-xs p-2">Working tree is clean ✓</p>
-            )}
-            {status?.files?.map(f => {
-              const { label, color } = fileStatus(f.xy);
-              const checked = selected.has(f.path);
-              return (
-                <div
-                  key={f.path}
-                  className="flex items-center gap-1.5 py-1 px-1 rounded hover:bg-[#21262d] group"
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={e => {
-                      const next = new Set(selected);
-                      e.target.checked ? next.add(f.path) : next.delete(f.path);
-                      setSelected(next);
-                    }}
-                    className="accent-[#7c3aed] cursor-pointer"
-                  />
-                  <span style={{ color }} className="text-xs font-mono w-4 flex-shrink-0">{f.xy?.trim()}</span>
-                  <button
-                    onClick={() => loadDiff(f.path)}
-                    className="flex-1 text-left text-[#e6edf3] text-xs font-mono truncate hover:text-[#79c0ff]"
-                    title={f.path}
-                  >
-                    {f.path}
-                  </button>
-                  <button
-                    onClick={() => discard(f.path)}
-                    title="Discard changes"
-                    className="hidden group-hover:block text-[#f85149] hover:text-red-400 text-xs px-1"
-                  >
-                    ✕
-                  </button>
+          <div className="flex flex-col h-full">
+            <div className="flex-1 overflow-y-auto p-2">
+              {allFiles.length === 0 ? (
+                <div className="text-center py-6 text-[#8b949e]">
+                  <div className="text-2xl mb-1">✓</div>
+                  Working tree is clean
                 </div>
-              );
-            })}
+              ) : allFiles.map(f => {
+                const { label, color, title } = statusMeta(f.xy);
+                return (
+                  <div key={f.path} className="flex items-center gap-1.5 py-1 px-1 rounded hover:bg-[#21262d] group">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(f.path)}
+                      onChange={e => {
+                        const next = new Set(selected);
+                        e.target.checked ? next.add(f.path) : next.delete(f.path);
+                        setSelected(next);
+                      }}
+                      className="accent-[#7c3aed] cursor-pointer flex-shrink-0"
+                    />
+                    <span title={title} style={{ color }} className="font-mono w-3.5 text-center flex-shrink-0">{label}</span>
+                    <button
+                      onClick={() => loadDiff(f.path)}
+                      className="flex-1 text-left text-[#e6edf3] font-mono truncate hover:text-[#79c0ff] min-w-0"
+                      title={f.path}
+                    >
+                      {f.path}
+                    </button>
+                    <button
+                      onClick={() => discard(f.path)}
+                      title="Discard"
+                      className="hidden group-hover:block text-[#f85149] hover:text-red-300 px-1 flex-shrink-0"
+                    >×</button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Commit area */}
+            <div className="flex-shrink-0 border-t border-[#30363d] bg-[#0d1117] p-2 space-y-1.5">
+              <textarea
+                value={commitMsg}
+                onChange={e => setCommitMsg(e.target.value)}
+                placeholder="Commit message…"
+                rows={2}
+                className="w-full bg-[#161b22] border border-[#30363d] rounded text-xs text-[#e6edf3]
+                  placeholder-[#484f58] px-2 py-1.5 resize-none focus:outline-none focus:border-[#7c3aed]"
+              />
+              <div className="flex gap-1">
+                <button
+                  onClick={generateCommitMsg}
+                  disabled={generating || !allFiles.length}
+                  className="flex-1 py-1 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d]
+                    text-[#e6edf3] rounded disabled:opacity-40 transition-colors"
+                >
+                  {generating ? '⏳ Generating…' : '✨ AI Message'}
+                </button>
+                <button
+                  onClick={stageSelected}
+                  disabled={!selected.size}
+                  className="py-1 px-2 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d]
+                    text-[#e6edf3] rounded disabled:opacity-40 transition-colors"
+                >
+                  Stage ({selected.size})
+                </button>
+                <button
+                  onClick={doCommit}
+                  disabled={committing || !commitMsg.trim()}
+                  className="py-1 px-3 bg-[#238636] hover:bg-[#2ea043] text-white rounded
+                    disabled:opacity-40 transition-colors font-semibold"
+                >
+                  {committing ? '…' : 'Commit'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* ── Diff tab ── */}
+        {/* ╔══ DIFF ══╗ */}
         {tab === 'diff' && (
-          <div className="p-2">
+          <div className="flex-1 overflow-y-auto p-2">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-[#8b949e] text-xs">{diffFile || 'All changes'}</span>
-              <button onClick={() => loadDiff(null)} className="text-xs text-[#79c0ff] hover:underline">Show all</button>
+              <span className="text-[#8b949e]">{diffFile || 'All changes'}</span>
+              <button onClick={() => loadDiff(null)} className="text-[#79c0ff] hover:underline">Show all</button>
             </div>
-            <pre className="text-xs font-mono text-[#e6edf3] overflow-x-auto whitespace-pre leading-5">
-              {diff.split('\n').map((line, i) => {
-                const color = line.startsWith('+') && !line.startsWith('+++')
-                  ? '#3fb950' : line.startsWith('-') && !line.startsWith('---')
-                  ? '#f85149' : line.startsWith('@@')
-                  ? '#79c0ff' : '#8b949e';
-                return <span key={i} style={{ color }}>{line}{'\n'}</span>;
-              })}
+            <pre className="font-mono overflow-x-auto whitespace-pre leading-5">
+              {diff.split('\n').map((line, i) => (
+                <span
+                  key={i}
+                  style={{
+                    color: line.startsWith('+') && !line.startsWith('+++') ? '#3fb950'
+                      : line.startsWith('-') && !line.startsWith('---') ? '#f85149'
+                      : line.startsWith('@@') ? '#79c0ff'
+                      : '#8b949e',
+                    display: 'block',
+                  }}
+                >{line}</span>
+              ))}
             </pre>
           </div>
         )}
 
-        {/* ── Log tab ── */}
-        {tab === 'log' && (
-          <div className="p-2">
-            <pre className="text-xs font-mono text-[#8b949e] leading-5 whitespace-pre-wrap">{log || 'No commits yet.'}</pre>
+        {/* ╔══ BRANCHES ══╗ */}
+        {tab === 'branches' && (
+          <div className="flex-1 overflow-y-auto p-3 space-y-4">
+
+            {/* Create branch */}
+            <section>
+              <p className="text-[#8b949e] uppercase tracking-wider mb-1.5">New Branch</p>
+              <div className="flex gap-1">
+                <input
+                  value={newBranch}
+                  onChange={e => setNewBranch(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && createBranch()}
+                  placeholder="branch-name"
+                  className="flex-1 bg-[#161b22] border border-[#30363d] rounded text-xs text-[#e6edf3]
+                    placeholder-[#484f58] px-2 py-1.5 focus:outline-none focus:border-[#7c3aed]"
+                />
+                <button
+                  onClick={createBranch}
+                  disabled={!newBranch.trim() || branchBusy}
+                  className="px-3 py-1 bg-[#238636] hover:bg-[#2ea043] text-white rounded disabled:opacity-40 transition-colors"
+                >
+                  Create
+                </button>
+              </div>
+            </section>
+
+            {/* Local branches */}
+            <section>
+              <p className="text-[#8b949e] uppercase tracking-wider mb-1.5">
+                Local ({branches.branches?.length ?? 0})
+              </p>
+              <div className="space-y-0.5">
+                {branches.branches?.map(b => (
+                  <div
+                    key={b.name}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded group ${
+                      b.current ? 'bg-[#7c3aed]/15 border border-[#7c3aed]/30' : 'hover:bg-[#21262d]'
+                    }`}
+                  >
+                    <span className={b.current ? 'text-[#7c3aed]' : 'text-[#484f58]'}>●</span>
+                    <span className={`flex-1 font-mono truncate ${b.current ? 'text-[#d2a8ff]' : 'text-[#e6edf3]'}`}>
+                      {b.name}
+                    </span>
+                    {b.current ? (
+                      <span className="text-[#7c3aed] text-[10px]">current</span>
+                    ) : (
+                      <div className="hidden group-hover:flex gap-1">
+                        <button
+                          onClick={() => switchBranch(b.name)}
+                          disabled={branchBusy}
+                          className="px-1.5 py-0.5 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d]
+                            text-[#e6edf3] rounded disabled:opacity-40"
+                        >
+                          Switch
+                        </button>
+                        <button
+                          onClick={() => deleteBranch(b.name)}
+                          className="px-1.5 py-0.5 text-[#f85149] hover:bg-[#f8514920] rounded"
+                          title="Delete branch"
+                        >
+                          🗑
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Remote branches */}
+            {(branches.remotes?.length ?? 0) > 0 && (
+              <section>
+                <p className="text-[#8b949e] uppercase tracking-wider mb-1.5">
+                  Remote ({branches.remotes.length})
+                </p>
+                <div className="space-y-0.5">
+                  {branches.remotes.map(r => (
+                    <div key={r} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#21262d] group">
+                      <span className="text-[#8b949e]">⌀</span>
+                      <span className="flex-1 font-mono text-[#79c0ff] truncate">{r}</span>
+                      <button
+                        onClick={() => switchBranch(r.replace(/^[^/]+\//, ''))}
+                        className="hidden group-hover:block px-1.5 py-0.5 bg-[#21262d] hover:bg-[#30363d]
+                          border border-[#30363d] text-[#e6edf3] rounded"
+                      >
+                        Checkout
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Remotes management */}
+            <section>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[#8b949e] uppercase tracking-wider">Remotes</p>
+                <button
+                  onClick={() => setShowRemoteForm(v => !v)}
+                  className="text-[#7c3aed] hover:underline"
+                >
+                  + Add remote
+                </button>
+              </div>
+
+              {showRemoteForm && (
+                <div className="space-y-1 mb-2 p-2 bg-[#161b22] border border-[#30363d] rounded-lg">
+                  <input
+                    value={remoteName}
+                    onChange={e => setRemoteName(e.target.value)}
+                    placeholder="name (origin)"
+                    className="w-full bg-[#0d1117] border border-[#30363d] rounded text-xs text-[#e6edf3]
+                      placeholder-[#484f58] px-2 py-1.5 focus:outline-none focus:border-[#7c3aed]"
+                  />
+                  <div className="flex gap-1">
+                    <input
+                      value={remoteUrl}
+                      onChange={e => setRemoteUrl(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && addRemote()}
+                      placeholder="https://github.com/user/repo.git"
+                      className="flex-1 bg-[#0d1117] border border-[#30363d] rounded text-xs text-[#e6edf3]
+                        placeholder-[#484f58] px-2 py-1.5 focus:outline-none focus:border-[#7c3aed]"
+                    />
+                    <button
+                      onClick={addRemote}
+                      disabled={!remoteUrl.trim()}
+                      className="px-2 py-1 bg-[#238636] hover:bg-[#2ea043] text-white rounded disabled:opacity-40"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {remotes.length > 0 ? (
+                <div className="space-y-1">
+                  {remotes.map(r => (
+                    <div key={r.name} className="flex items-center gap-2 px-2 py-1.5 bg-[#161b22] border border-[#30363d] rounded">
+                      <span className="font-mono text-[#e3b341] flex-shrink-0">{r.name}</span>
+                      <span className="text-[#8b949e] truncate font-mono">{r.url}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[#484f58]">No remotes configured</p>
+              )}
+            </section>
           </div>
         )}
-      </div>
 
-      {/* ── Commit section ── */}
-      <div className="border-t border-[#30363d] p-2 space-y-2 flex-shrink-0 bg-[#0d1117]">
-        <div className="flex items-center gap-1">
-          <textarea
-            value={commitMsg}
-            onChange={e => setCommitMsg(e.target.value)}
-            placeholder="Commit message…"
-            rows={2}
-            className="flex-1 bg-[#161b22] border border-[#30363d] rounded text-xs text-[#e6edf3] placeholder-[#484f58] px-2 py-1.5 resize-none focus:outline-none focus:border-[#7c3aed]"
-          />
-        </div>
-        <div className="flex gap-1">
-          <button
-            onClick={generateCommitMessage}
-            disabled={generating || !status?.files?.length}
-            className="flex-1 py-1 text-xs bg-[#21262d] hover:bg-[#30363d] text-[#e6edf3] rounded disabled:opacity-50 transition-colors"
-          >
-            {generating ? '⏳ Generating…' : '✨ AI message'}
-          </button>
-          <button
-            onClick={stageSelected}
-            disabled={selected.size === 0}
-            className="py-1 px-2 text-xs bg-[#21262d] hover:bg-[#30363d] text-[#e6edf3] rounded disabled:opacity-50 transition-colors"
-          >
-            Stage ({selected.size})
-          </button>
-          <button
-            onClick={doCommit}
-            disabled={committing || !commitMsg.trim()}
-            className="py-1 px-3 text-xs bg-[#238636] hover:bg-[#2ea043] text-white rounded disabled:opacity-50 transition-colors font-medium"
-          >
-            {committing ? '…' : 'Commit'}
-          </button>
-        </div>
+        {/* ╔══ HISTORY ══╗ */}
+        {tab === 'history' && (
+          <div className="flex-1 overflow-y-auto p-2">
+            {log ? log.split('\n').filter(Boolean).map((line, i) => {
+              const hash = line.slice(0, 7);
+              const rest = line.slice(7).trim();
+              return (
+                <div key={i} className="flex items-start gap-2 py-1.5 px-1 hover:bg-[#21262d] rounded">
+                  <span className="text-[#e3b341] font-mono flex-shrink-0">{hash}</span>
+                  <span className="text-[#e6edf3] leading-4 break-all">{rest}</span>
+                </div>
+              );
+            }) : (
+              <p className="text-[#8b949e] p-4 text-center">No commits yet.</p>
+            )}
+          </div>
+        )}
+
+        {/* ╔══ STASH ══╗ */}
+        {tab === 'stash' && (
+          <div className="flex-1 overflow-y-auto p-3 space-y-4">
+
+            <section>
+              <p className="text-[#8b949e] uppercase tracking-wider mb-1.5">Save Stash</p>
+              <div className="flex gap-1">
+                <input
+                  value={stashMsg}
+                  onChange={e => setStashMsg(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && doStash()}
+                  placeholder="Stash message (optional)"
+                  className="flex-1 bg-[#161b22] border border-[#30363d] rounded text-xs text-[#e6edf3]
+                    placeholder-[#484f58] px-2 py-1.5 focus:outline-none focus:border-[#7c3aed]"
+                />
+                <button
+                  onClick={doStash}
+                  disabled={!allFiles.length}
+                  className="px-3 py-1 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d]
+                    text-[#e6edf3] rounded disabled:opacity-40 transition-colors"
+                >
+                  Stash
+                </button>
+              </div>
+            </section>
+
+            <section>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[#8b949e] uppercase tracking-wider">Stashes ({stashes.length})</p>
+                {stashes.length > 0 && (
+                  <button
+                    onClick={doStashPop}
+                    className="px-2 py-0.5 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d]
+                      text-[#e6edf3] rounded transition-colors"
+                  >
+                    Pop latest
+                  </button>
+                )}
+              </div>
+              {stashes.length === 0 ? (
+                <p className="text-[#484f58]">No stashes saved</p>
+              ) : (
+                <div className="space-y-1">
+                  {stashes.map((s, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center gap-2 px-2 py-1.5 bg-[#161b22] border border-[#30363d]
+                        rounded hover:border-[#484f58] group"
+                    >
+                      <span className="text-[#7c3aed] font-mono flex-shrink-0">{idx}</span>
+                      <span className="flex-1 text-[#e6edf3] truncate">{s.replace(/^stash@\{\d+\}: /, '')}</span>
+                      <div className="hidden group-hover:flex gap-1">
+                        <button
+                          onClick={doStashPop}
+                          className="px-1.5 py-0.5 text-[#3fb950] hover:bg-[#3fb95020] rounded"
+                        >
+                          Apply
+                        </button>
+                        <button
+                          onClick={() => doStashDrop(idx)}
+                          className="px-1.5 py-0.5 text-[#f85149] hover:bg-[#f8514920] rounded"
+                        >
+                          Drop
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+
       </div>
     </div>
   );
 }
+

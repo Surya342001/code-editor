@@ -329,3 +329,90 @@ ipcMain.handle('git:discard', async (_, dir, filePath) => {
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+
+ipcMain.handle('git:init', async (_, dir) => {
+  try { await git(['init'], dir); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:pull', async (_, dir) => {
+  try { const out = await git(['pull'], dir); return { ok: true, out }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:fetch', async (_, dir) => {
+  try { const out = await git(['fetch', '--all', '--prune'], dir); return { ok: true, out }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:branches', async (_, dir) => {
+  try {
+    const localRaw  = await git(['branch'], dir).catch(() => '');
+    const remoteRaw = await git(['branch', '-r'], dir).catch(() => '');
+    const branches  = localRaw.split('\n').filter(Boolean).map(l => ({
+      name:    l.replace('*', '').trim(),
+      current: l.trim().startsWith('*'),
+    }));
+    const remotes = remoteRaw.split('\n')
+      .filter(l => l.trim() && !l.includes('HEAD ->'))
+      .map(l => l.trim());
+    return { ok: true, branches, remotes };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:createBranch', async (_, dir, name) => {
+  try { await git(['checkout', '-b', name], dir); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:switchBranch', async (_, dir, name) => {
+  try { await git(['checkout', name], dir); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:deleteBranch', async (_, dir, name, force) => {
+  try { await git(['branch', force ? '-D' : '-d', name], dir); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:stash', async (_, dir, msg) => {
+  try {
+    const args = msg ? ['stash', 'push', '-u', '-m', msg] : ['stash', 'push', '-u'];
+    await git(args, dir);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:stashPop', async (_, dir) => {
+  try { await git(['stash', 'pop'], dir); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:stashDrop', async (_, dir, index) => {
+  try { await git(['stash', 'drop', `stash@{${index}}`], dir); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:stashList', async (_, dir) => {
+  try {
+    const out = await git(['stash', 'list'], dir).catch(() => '');
+    return { ok: true, stashes: out.split('\n').filter(Boolean) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:remotes', async (_, dir) => {
+  try {
+    const out = await git(['remote', '-v'], dir).catch(() => '');
+    const map = {};
+    out.split('\n').filter(Boolean).forEach(l => {
+      const [name, rest] = l.split('\t');
+      if (name && !map[name]) map[name] = (rest || '').split(' ')[0];
+    });
+    return { ok: true, remotes: Object.entries(map).map(([name, url]) => ({ name, url })) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('git:addRemote', async (_, dir, name, url) => {
+  try { await git(['remote', 'add', name, url], dir); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});

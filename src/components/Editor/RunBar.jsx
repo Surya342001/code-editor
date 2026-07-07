@@ -22,7 +22,7 @@ export default function RunBar() {
   const hasCurrentIndex = currentFolder && indexedFolder === currentFolder;
 
   return (
-    <div className="flex items-center h-9 bg-[#161b22] border-b border-[#30363d] px-3 gap-3 flex-shrink-0 select-none">
+    <div className="flex items-center h-9 bg-[#161b22] border-b border-[#30363d] px-3 gap-3 flex-shrink-0 select-none no-drag">
       {/* Project name */}
       {currentFolder && (
         <span className="text-xs text-[#8b949e] font-medium truncate max-w-[120px]">

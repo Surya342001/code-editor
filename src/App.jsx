@@ -77,10 +77,10 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-[#0d1117] text-[#e6edf3] overflow-hidden">
-      {/* macOS traffic-light drag region */}
-      <div className="drag-region absolute top-0 left-0 right-0 h-8 pointer-events-none z-50" />
+      {/* macOS title bar — traffic lights live here, whole row is draggable */}
+      <div className="drag-region h-8 bg-[#0d1117] flex-shrink-0" />
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex overflow-hidden min-h-0" style={{ flex: '1 1 0' }}>
         {/* Activity Bar */}
         <ActivityBar />
 
