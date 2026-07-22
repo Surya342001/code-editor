@@ -4,6 +4,7 @@ import useEditorStore from '../store/editorStore';
 const icons = [
   { id: 'explorer', icon: '📁', tip: 'Explorer' },
   { id: 'search',   icon: '🔍', tip: 'Semantic Search' },
+  { id: 'graph',    icon: '🧠', tip: 'Knowledge Graph' },
 ];
 
 export default function ActivityBar() {

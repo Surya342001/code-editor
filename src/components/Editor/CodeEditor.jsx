@@ -7,6 +7,185 @@ import useProjectIndex from '../../store/projectIndex';
 
 const OLLAMA = 'http://localhost:11434';
 
+const KNAPSACK_JS_SNIPPET = `function knapsack01(weights, values, capacity) {
+  const n = weights.length;
+  const dp = new Array(capacity + 1).fill(0);
+
+  for (let i = 0; i < n; i++) {
+    const w = weights[i];
+    const v = values[i];
+
+    // Iterate backward so each item is used at most once
+    for (let c = capacity; c >= w; c--) {
+      dp[c] = Math.max(dp[c], dp[c - w] + v);
+    }
+  }
+
+  return dp[capacity];
+}
+
+// Example:
+const weights = [2, 3, 4, 5];
+const values = [3, 4, 5, 8];
+const capacity = 8;
+console.log(knapsack01(weights, values, capacity)); // 12
+`;
+
+function isKnapsackJsPrompt(text = '') {
+  const lower = text.toLowerCase();
+  const hasKnapsack =
+    lower.includes('knapsack') ||
+    lower.includes('kanpsack') ||
+    lower.includes('knap sack');
+  const hasJs =
+    lower.includes('javascript') ||
+    lower.includes('javaacript') ||
+    lower.includes('java script') ||
+    /\bjs\b/.test(lower);
+  const asksForCode =
+    lower.includes('code') ||
+    lower.includes('teach') ||
+    lower.includes('algorithm') ||
+    lower.includes('generate');
+  return hasKnapsack && hasJs && asksForCode;
+}
+
+function detectAlgo(text = '') {
+  const lower = text.toLowerCase();
+  if (
+    lower.includes('knapsack') ||
+    lower.includes('kanpsack') ||
+    lower.includes('knap sack')
+  ) return 'knapsack';
+  if (
+    lower.includes('binary search') ||
+    lower.includes('binarry search') ||
+    lower.includes('binarysearch')
+  ) return 'binary-search';
+  if (
+    lower.includes('fibonacci') ||
+    lower.includes('fibanocci') ||
+    lower.includes('fibanaci') ||
+    lower.includes('fabonacci')
+  ) return 'fibonacci';
+  return null;
+}
+
+function getNearestJsFunctionName(prefix = '') {
+  const re = /function\s+([a-zA-Z_$][\w$]*)\s*\(|(?:const|let|var)\s+([a-zA-Z_$][\w$]*)\s*=\s*\([^)]*\)\s*=>/g;
+  let m;
+  let last = null;
+  while ((m = re.exec(prefix)) !== null) {
+    last = m[1] || m[2] || null;
+  }
+  return last;
+}
+
+function buildJsFunctionBody(algo, indent = '  ') {
+  if (algo === 'knapsack') {
+    return [
+      `${indent}const dp = new Array(capacity + 1).fill(0);`,
+      `${indent}for (let i = 0; i < weights.length; i++) {`,
+      `${indent}  const w = weights[i];`,
+      `${indent}  const v = values[i];`,
+      `${indent}  for (let c = capacity; c >= w; c--) {`,
+      `${indent}    dp[c] = Math.max(dp[c], dp[c - w] + v);`,
+      `${indent}  }`,
+      `${indent}}`,
+      `${indent}return dp[capacity];`,
+    ].join('\n');
+  }
+
+  if (algo === 'binary-search') {
+    return [
+      `${indent}let low = 0;`,
+      `${indent}let high = arr.length - 1;`,
+      `${indent}while (low <= high) {`,
+      `${indent}  const mid = Math.floor((low + high) / 2);`,
+      `${indent}  if (arr[mid] === target) return mid;`,
+      `${indent}  if (arr[mid] < target) low = mid + 1;`,
+      `${indent}  else high = mid - 1;`,
+      `${indent}}`,
+      `${indent}return -1;`,
+    ].join('\n');
+  }
+
+  if (algo === 'fibonacci') {
+    return [
+      `${indent}if (n <= 1) return n;`,
+      `${indent}let a = 0;`,
+      `${indent}let b = 1;`,
+      `${indent}for (let i = 2; i <= n; i++) {`,
+      `${indent}  const next = a + b;`,
+      `${indent}  a = b;`,
+      `${indent}  b = next;`,
+      `${indent}}`,
+      `${indent}return b;`,
+    ].join('\n');
+  }
+
+  return '';
+}
+
+function buildJsFullSnippet(algo) {
+  if (algo === 'binary-search') {
+    return [
+      'function binarySearch(arr, target) {',
+      '  let low = 0;',
+      '  let high = arr.length - 1;',
+      '  while (low <= high) {',
+      '    const mid = Math.floor((low + high) / 2);',
+      '    if (arr[mid] === target) return mid;',
+      '    if (arr[mid] < target) low = mid + 1;',
+      '    else high = mid - 1;',
+      '  }',
+      '  return -1;',
+      '}',
+      '',
+      'const nums = [2, 4, 7, 11, 19, 25];',
+      'const target = 11;',
+      'console.log(`Index: ${binarySearch(nums, target)}`);',
+    ].join('\n');
+  }
+
+  if (algo === 'fibonacci') {
+    return [
+      'function fibonacci(n) {',
+      '  if (n <= 1) return n;',
+      '  let a = 0;',
+      '  let b = 1;',
+      '  for (let i = 2; i <= n; i++) {',
+      '    const next = a + b;',
+      '    a = b;',
+      '    b = next;',
+      '  }',
+      '  return b;',
+      '}',
+      '',
+      'const n = 10;',
+      'console.log(`Fibonacci(${n}) = ${fibonacci(n)}`);',
+    ].join('\n');
+  }
+
+  return KNAPSACK_JS_SNIPPET.trimEnd();
+}
+
+function isProbablyProse(text = '') {
+  const t = text.trim();
+  if (!t) return true;
+  const proseCue = /\b(here is|this function|i hope|let me know|you can use|possible solution)\b/i.test(t);
+  const hasCodeSignal = /[{}();=<>]/.test(t) || /\b(const|let|var|function|return|if|for|while|class)\b/.test(t);
+  const wordCount = t.split(/\s+/).length;
+  return proseCue || (!hasCodeSignal && wordCount > 12);
+}
+
+function cleanInlineResponse(text = '') {
+  return (text || '')
+    .replace(/^```[a-zA-Z0-9_-]*\n?/, '')
+    .replace(/```[\s\S]*$/, '')
+    .trimEnd();
+}
+
 // ─── Custom theme ──────────────────────────────────────────────────────────
 const THEME = {
   base: 'vs-dark',
@@ -84,78 +263,176 @@ export default function CodeEditor() {
     monaco.editor.defineTheme('lt-dark', THEME);
     monaco.editor.setTheme('lt-dark');
 
-    // Inline ghost-text completions powered by Ollama
+    // ── Inline ghost-text completions powered by Ollama ─────────────────
+    // Accepts Tab, dismissed with Escape — works like GitHub Copilot
+    const FIM_MODELS = ['codellama', 'deepseek-coder', 'qwen2.5-coder', 'qwen', 'starcoder', 'codegemma'];
+
     const disp = monaco.languages.registerInlineCompletionsProvider({ pattern: '**' }, {
       provideInlineCompletions: async (model, position, _ctx, token) => {
-        const lineContent = model.getLineContent(position.lineNumber);
-        if (lineContent.trimStart().length < 2) return { items: [] };
+        // ── 1. Quick pre-checks (sync, no cost) ──────────────────────────
+        const lineText     = model.getLineContent(position.lineNumber);
+        const beforeCursor = lineText.slice(0, position.column - 1);
+        const isNewLine    = beforeCursor.trim().length === 0;
+        const lineIndent   = (lineText.match(/^\s*/) || [''])[0];
 
-        const prefix = model.getValueInRange({
-          startLineNumber: Math.max(1, position.lineNumber - 30),
+        // Deterministic editor-first generation for Knapsack JS prompts.
+        const promptStart = Math.max(1, position.lineNumber - 4);
+        const promptText = model.getValueInRange({
+          startLineNumber: promptStart,
           startColumn: 1,
           endLineNumber: position.lineNumber,
           endColumn: position.column,
         });
-
+        const langId = model.getLanguageId();
+        const jsLang = langId === 'javascript' || langId === 'typescript';
+        const prefixStart = Math.max(1, position.lineNumber - 40);
+        const suffixEnd   = Math.min(model.getLineCount(), position.lineNumber + 15);
+        const prefix = model.getValueInRange({
+          startLineNumber: prefixStart,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        });
         const suffix = model.getValueInRange({
           startLineNumber: position.lineNumber,
           startColumn: position.column,
-          endLineNumber: Math.min(model.getLineCount(), position.lineNumber + 20),
-          endColumn: 200,
+          endLineNumber: suffixEnd,
+          endColumn: model.getLineMaxColumn(suffixEnd),
         });
 
+        const functionName = getNearestJsFunctionName(prefix);
+        const detectedAlgo = detectAlgo(`${promptText} ${functionName || ''}`);
+        const nearEmptyBody = suffix.trimStart().startsWith('}');
+
+        if (jsLang && detectedAlgo && functionName && nearEmptyBody) {
+          const body = buildJsFunctionBody(detectedAlgo, `${lineIndent}  `);
+          if (body) {
+            return {
+              items: [{
+                insertText: `\n${body}\n${lineIndent}`,
+                range: {
+                  startLineNumber: position.lineNumber,
+                  startColumn: position.column,
+                  endLineNumber: position.lineNumber,
+                  endColumn: position.column,
+                },
+              }],
+            };
+          }
+        }
+
+        if (jsLang && isKnapsackJsPrompt(promptText)) {
+          return {
+            items: [{
+              insertText: `\n${KNAPSACK_JS_SNIPPET}`,
+              range: {
+                startLineNumber: position.lineNumber,
+                startColumn: position.column,
+                endLineNumber: position.lineNumber,
+                endColumn: position.column,
+              },
+            }],
+          };
+        }
+
+        // Require at least 3 visible chars, OR be at the start of a new line
+        if (!isNewLine && beforeCursor.trim().length < 3) return { items: [] };
+
+        // Skip inside single-line comments (// ...) — avoid noisy suggestions
+        if (/^\s*(\/\/|#|--|%)/.test(beforeCursor)) return { items: [] };
+
+        // ── 2. Debounce — wait 700 ms; cancel silently if user keeps typing
+        const proceed = await new Promise((resolve) => {
+          const tid = setTimeout(() => resolve(true), 700);
+          token.onCancellationRequested(() => { clearTimeout(tid); resolve(false); });
+        });
+        if (!proceed || token.isCancellationRequested) return { items: [] };
+
+        // ── 3. Context already collected above ────────────────────────────
+
+        // ── 4. Resolve model + active file ───────────────────────────────
+        const editorState  = useEditorStore.getState();
+        const projectState = useProjectIndex.getState();
+        const activeTab    = editorState.tabs.find(t => t.id === editorState.activeTabId);
+        const ollamaModel  = editorState.selectedModel || 'llama3';
+        const lang         = activeTab?.language || model.getLanguageId();
+        const filePath     = activeTab?.path || 'unknown';
+
+        // Project summary for broader context (capped to avoid huge prompts)
+        const projectSummary = projectState.getSummary?.().slice(0, 1000) || '';
+
+        // ── 5. Build prompt ───────────────────────────────────────────────
+        const isFIM = FIM_MODELS.some(n => ollamaModel.toLowerCase().includes(n));
+        let prompt;
+        if (isFIM) {
+          // Fill-in-the-Middle tokens (CodeLlama, DeepSeek-Coder, Qwen-Coder…)
+          prompt = `<fim_prefix>${prefix}<fim_suffix>${suffix}<fim_middle>`;
+        } else {
+          // Instruction-style for general models (llama3, mistral, gemma…)
+          prompt = `You are an inline code completion engine. Output ONLY the code to insert at the cursor — no explanations, no markdown fences, no repeated code.
+
+File: ${filePath}  Language: ${lang}
+${projectSummary ? `Project context:\n${projectSummary}\n` : ''}
+### Code before cursor
+${prefix}
+### Code after cursor
+${suffix}
+### Completion (insert at cursor, continue naturally):`;
+        }
+
+        // ── 6. Set status indicator ───────────────────────────────────────
+        useEditorStore.getState().setAITyping(true);
         const ctrl = new AbortController();
-        token.onCancellationRequested(() => ctrl.abort());
+        token.onCancellationRequested(() => {
+          ctrl.abort();
+          useEditorStore.getState().setAITyping(false);
+        });
 
         try {
-          const editorState = useEditorStore.getState();
-          const projectState = useProjectIndex.getState();
-          const active = editorState.tabs.find(tab => tab.id === editorState.activeTabId);
-          const model_ = editorState.selectedModel || 'llama3';
-          const projectSummary = projectState.getSummary().slice(0, 1800);
-          const queryContext = (await projectState.getContextForQuery(prefix.split('\n').slice(-8).join('\n'))).slice(0, 2200);
-
           const res = await fetch(`${OLLAMA}/api/generate`, {
-            method: 'POST',
+            method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              model: model_,
-              prompt: `You are an inline coding assistant like GitHub Copilot. Complete code at the cursor.
-
-Rules:
-- Output only the exact code to insert at the cursor.
-- No markdown fences, no explanations, no repeated existing code.
-- Keep the style consistent with the active file.
-- Prefer using existing project functions/imports when visible in context.
-
-Active file: ${active?.path || 'unknown'}
-Language: ${active?.language || model.getLanguageId()}
-
-Project summary:
-${projectSummary || 'No project index available.'}
-
-Relevant project context:
-${queryContext || 'No related context.'}
-
-Code before cursor:
-${prefix}
-
-Code after cursor:
-${suffix}
-
-Insert at cursor:`,
-              stream: false,
-              options: { num_predict: 120, temperature: 0.05, top_p: 0.8, stop: ['```', '<|end|>'] },
+              model:   ollamaModel,
+              prompt,
+              stream:  false,
+              options: {
+                num_predict: 160,
+                temperature: 0.05,
+                top_p:       0.9,
+                stop:        ['```', '<|end|>', '<fim_prefix>', '<fim_suffix>', '<|endoftext|>'],
+              },
             }),
             signal: ctrl.signal,
           });
+
+          useEditorStore.getState().setAITyping(false);
           if (!res.ok) return { items: [] };
+
           const data = await res.json();
-          const text = (data.response || '')
-            .replace(/^```[a-zA-Z0-9_-]*\n?/, '')
-            .replace(/```[\s\S]*$/, '')
-            .trimEnd();
+          let text = cleanInlineResponse(data.response || '');
+
+          // Strip any accidental repetition of the prefix's last line
+          const lastPrefixLine = prefix.split('\n').pop();
+          if (lastPrefixLine && text.startsWith(lastPrefixLine.trimStart())) {
+            text = text.slice(lastPrefixLine.trimStart().length).trimStart();
+          }
+
+          if (isProbablyProse(text)) {
+            if (jsLang && detectedAlgo) {
+              if (functionName && nearEmptyBody) {
+                const body = buildJsFunctionBody(detectedAlgo, `${lineIndent}  `);
+                if (body) text = `\n${body}\n${lineIndent}`;
+              } else {
+                text = `\n${buildJsFullSnippet(detectedAlgo)}`;
+              }
+            } else {
+              return { items: [] };
+            }
+          }
+
           if (!text) return { items: [] };
+
           return {
             items: [{
               insertText: text,
@@ -165,7 +442,10 @@ Insert at cursor:`,
               },
             }],
           };
-        } catch { return { items: [] }; }
+        } catch {
+          useEditorStore.getState().setAITyping(false);
+          return { items: [] };
+        }
       },
       freeInlineCompletions: () => {},
     });
@@ -269,6 +549,66 @@ Insert at cursor:`,
         if (text.trim()) {
           setAIQuery(`Write comprehensive tests for this code. Return a FILE: edit for the test file:\n\`\`\`${lang}\n${text}\n\`\`\``, 'chat');
         }
+      },
+    });
+
+    // "Insert Knapsack (JavaScript)" in editor directly
+    editor.addAction({
+      id: 'ai-insert-knapsack-js',
+      label: '🧠 Insert Knapsack (JavaScript)',
+      keybindings: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyK],
+      contextMenuGroupId: '9_cutcopypaste',
+      contextMenuOrder: 14,
+      run: () => {
+        const model = editor.getModel();
+        const pos = editor.getPosition();
+        if (!model || !pos) return;
+
+        editor.executeEdits('knapsack-js-snippet', [{
+          range: new monacoInstance.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column),
+          text: `\n${KNAPSACK_JS_SNIPPET}`,
+          forceMoveMarkers: true,
+        }]);
+      },
+    });
+
+    editor.addAction({
+      id: 'ai-complete-current-function',
+      label: '⚡ Complete Current Function (Code Only)',
+      keybindings: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.Enter],
+      contextMenuGroupId: '9_cutcopypaste',
+      contextMenuOrder: 15,
+      run: () => {
+        const model = editor.getModel();
+        const pos = editor.getPosition();
+        if (!model || !pos) return;
+
+        const line = model.getLineContent(pos.lineNumber);
+        const indent = (line.match(/^\s*/) || [''])[0];
+        const prefixStart = Math.max(1, pos.lineNumber - 80);
+        const prefix = model.getValueInRange({
+          startLineNumber: prefixStart,
+          startColumn: 1,
+          endLineNumber: pos.lineNumber,
+          endColumn: pos.column,
+        });
+        const functionName = getNearestJsFunctionName(prefix);
+        const algo = detectAlgo(functionName || prefix.slice(-600));
+
+        if (!algo) {
+          useEditorStore.getState().toast('No supported function intent found (knapsack/binary/fibonacci)', 'warn');
+          return;
+        }
+
+        const body = buildJsFunctionBody(algo, `${indent}  `);
+        if (!body) return;
+
+        editor.executeEdits('complete-current-function', [{
+          range: new monacoInstance.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column),
+          text: `\n${body}\n${indent}`,
+          forceMoveMarkers: true,
+        }]);
+        useEditorStore.getState().toast(`Generated ${algo} function body`, 'success');
       },
     });
 

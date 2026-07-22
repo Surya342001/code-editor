@@ -16,6 +16,23 @@ function statusMeta(xy) {
   return                { label: s,   color: '#8b949e', title: s           };
 }
 
+function fileGlyph(filePath = '') {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith('.jsx') || lower.endsWith('.tsx')) return '◧';
+  if (lower.endsWith('.js') || lower.endsWith('.ts')) return '◨';
+  if (lower.endsWith('.json')) return '{}';
+  if (lower.endsWith('.md')) return '≡';
+  if (lower.endsWith('.css')) return '#';
+  if (lower.endsWith('.py')) return 'py';
+  if (lower.endsWith('.sh')) return '$';
+  return '•';
+}
+
+function folderName(absPath = '') {
+  const parts = absPath.replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : absPath;
+}
+
 // Small reusable button
 function Btn({ onClick, disabled, children, className = '' }) {
   return (
@@ -71,6 +88,9 @@ export default function GitPanel() {
   const [pushing,  setPushing]  = useState(false);
   const [pulling,  setPulling]  = useState(false);
   const [fetching, setFetching] = useState(false);
+  const [syncingMain, setSyncingMain] = useState(false);
+  const [desktopBusy, setDesktopBusy] = useState(false);
+  const [desktopOut, setDesktopOut] = useState('No operations yet.');
 
   // ── data load
   const refresh = useCallback(async () => {
@@ -136,6 +156,79 @@ export default function GitPanel() {
     setFetching(false);
     if (r.ok) { toast('Fetched ✓', 'success'); refresh(); }
     else toast(r.error, 'error');
+  };
+
+  const doSyncMain = async () => {
+    if (syncingMain) return;
+    setSyncingMain(true);
+    toast('Syncing with main…', 'info');
+    const r = await window.api.gitSyncMain(currentFolder);
+    setSyncingMain(false);
+    if (r.ok) {
+      toast('Synced from main ✓', 'success');
+      refresh();
+    } else {
+      toast(r.error, 'error');
+    }
+  };
+
+  const updateDesktopOut = (title, content) => {
+    const stamp = new Date().toLocaleTimeString();
+    const body = (content || '(no output)').trim();
+    setDesktopOut(`[${stamp}] ${title}\n${body}`);
+  };
+
+  const runDesktopOp = async (label, runner, refreshAfter = true) => {
+    if (desktopBusy) return null;
+    setDesktopBusy(true);
+    toast(`${label}…`, 'info');
+    try {
+      const result = await runner();
+      if (result?.ok) {
+        updateDesktopOut(label, result.out || result.url || 'Completed');
+        toast(`${label} ✓`, 'success');
+        if (refreshAfter) refresh();
+      } else {
+        const msg = result?.error || 'Operation failed';
+        updateDesktopOut(`${label} failed`, msg);
+        toast(msg, 'error');
+      }
+      return result;
+    } finally {
+      setDesktopBusy(false);
+    }
+  };
+
+  const doPublishBranch = async () => {
+    await runDesktopOp('Publish Branch', () => window.api.gitPublishBranch(currentFolder));
+  };
+
+  const doPullRebase = async () => {
+    await runDesktopOp('Pull Rebase', () => window.api.gitPullRebase(currentFolder));
+  };
+
+  const doRebaseMain = async () => {
+    await runDesktopOp('Rebase on Main', () => window.api.gitRebaseMain(currentFolder));
+  };
+
+  const doAbortRebase = async () => {
+    await runDesktopOp('Abort Rebase', () => window.api.gitAbortRebase(currentFolder));
+  };
+
+  const doCopyPrLink = async () => {
+    const r = await runDesktopOp(
+      'Prepare PR Link',
+      () => window.api.gitPrUrl(currentFolder, status?.branch || undefined, 'origin'),
+      false,
+    );
+    if (r?.ok && r.url) {
+      try {
+        await navigator.clipboard.writeText(r.url);
+        toast('PR link copied ✓', 'success');
+      } catch {
+        toast('Copy failed, link shown in output panel', 'warn');
+      }
+    }
   };
 
   // ── staging
@@ -281,9 +374,15 @@ export default function GitPanel() {
   }
 
   const allFiles = status?.files ?? [];
+  const repoName = folderName(currentFolder);
+  const modifiedCount = allFiles.filter(f => (f.xy || '').includes('M')).length;
+  const addedCount = allFiles.filter(f => (f.xy || '').includes('A')).length;
+  const deletedCount = allFiles.filter(f => (f.xy || '').includes('D')).length;
+  const untrackedCount = allFiles.filter(f => (f.xy || '').includes('?')).length;
 
   const TABS = [
     { id: 'changes',  label: `Changes ${allFiles.length > 0 ? `(${allFiles.length})` : '✓'}` },
+    { id: 'desktop',  label: 'Desktop' },
     { id: 'diff',     label: 'Diff' },
     { id: 'branches', label: `Branches (${branches.branches?.length ?? 0})` },
     { id: 'history',  label: 'History' },
@@ -291,26 +390,54 @@ export default function GitPanel() {
   ];
 
   return (
-    <div className="flex flex-col h-full overflow-hidden text-xs">
+    <div className="flex flex-col h-full overflow-hidden text-xs bg-[#0f141a]">
 
       {/* ── Header: branch + action buttons ── */}
-      <div className="flex-shrink-0 bg-[#161b22] border-b border-[#30363d]">
-        <div className="flex items-center gap-2 px-3 pt-2 pb-1">
-          <span className="text-[#3fb950] font-mono font-semibold text-xs">⎇ {status?.branch || '…'}</span>
-          {(status?.ahead  ?? 0) > 0 && (
-            <span className="text-[#e3b341] text-[10px] bg-[#e3b34118] px-1.5 py-0.5 rounded">↑{status.ahead} ahead</span>
-          )}
-          {(status?.behind ?? 0) > 0 && (
-            <span className="text-[#f85149] text-[10px] bg-[#f8514918] px-1.5 py-0.5 rounded">↓{status.behind} behind</span>
-          )}
-          <div className="flex-1" />
-          <button
-            onClick={refresh}
-            title="Refresh"
-            className="text-[#8b949e] hover:text-[#e6edf3] text-sm px-1 transition-colors"
-          >↻</button>
+      <div className="flex-shrink-0 bg-gradient-to-b from-[#1a222d] to-[#161b22] border-b border-[#30363d]">
+        <div className="px-3 pt-2 pb-2 border-b border-[#30363d]/60">
+          <div className="text-[10px] uppercase tracking-wide text-[#8b949e]">Current Repository</div>
+          <div className="mt-1 flex items-center gap-2">
+            <span className="text-[#79c0ff]">🗂</span>
+            <span className="text-[#e6edf3] font-semibold truncate">{repoName}</span>
+            <div className="flex-1" />
+            <button
+              onClick={refresh}
+              title="Refresh"
+              className="text-[#8b949e] hover:text-[#e6edf3] text-sm px-1 transition-colors"
+            >↻</button>
+          </div>
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <span className="text-[#3fb950] font-mono font-semibold text-xs">⎇ {status?.branch || '…'}</span>
+            {(status?.ahead  ?? 0) > 0 && (
+              <span className="text-[#e3b341] text-[10px] bg-[#e3b34118] px-1.5 py-0.5 rounded">↑{status.ahead} ahead</span>
+            )}
+            {(status?.behind ?? 0) > 0 && (
+              <span className="text-[#f85149] text-[10px] bg-[#f8514918] px-1.5 py-0.5 rounded">↓{status.behind} behind</span>
+            )}
+            {(status?.ahead ?? 0) === 0 && (status?.behind ?? 0) === 0 && (
+              <span className="text-[#3fb950] text-[10px] bg-[#3fb9501c] px-1.5 py-0.5 rounded">Up to date</span>
+            )}
+          </div>
+          <div className="mt-2 grid grid-cols-4 gap-1">
+            <div className="bg-[#0d1117] border border-[#30363d] rounded px-1.5 py-1 text-center">
+              <div className="text-[#8b949e] text-[10px]">M</div>
+              <div className="text-[#e3b341] font-semibold">{modifiedCount}</div>
+            </div>
+            <div className="bg-[#0d1117] border border-[#30363d] rounded px-1.5 py-1 text-center">
+              <div className="text-[#8b949e] text-[10px]">A</div>
+              <div className="text-[#3fb950] font-semibold">{addedCount}</div>
+            </div>
+            <div className="bg-[#0d1117] border border-[#30363d] rounded px-1.5 py-1 text-center">
+              <div className="text-[#8b949e] text-[10px]">D</div>
+              <div className="text-[#f85149] font-semibold">{deletedCount}</div>
+            </div>
+            <div className="bg-[#0d1117] border border-[#30363d] rounded px-1.5 py-1 text-center">
+              <div className="text-[#8b949e] text-[10px]">U</div>
+              <div className="text-[#79c0ff] font-semibold">{untrackedCount}</div>
+            </div>
+          </div>
         </div>
-        <div className="flex gap-1.5 px-3 pb-2">
+        <div className="flex gap-1.5 px-3 py-2">
           <button
             onClick={doFetch}
             disabled={fetching}
@@ -328,9 +455,17 @@ export default function GitPanel() {
             {pulling ? '⏳' : '↓'} Pull
           </button>
           <button
+            onClick={doSyncMain}
+            disabled={syncingMain}
+            className="flex-1 py-1 text-[10px] bg-[#1f6feb] hover:bg-[#388bfd]
+              text-white rounded disabled:opacity-40 transition-colors font-semibold"
+          >
+            {syncingMain ? '⏳' : '⇅'} Sync Main
+          </button>
+          <button
             onClick={doPush}
             disabled={pushing}
-            className="flex-1 py-1 text-[10px] bg-[#7c3aed] hover:bg-[#6d28d9]
+            className="flex-1 py-1 text-[10px] bg-[#8250df] hover:bg-[#6f42c1]
               text-white rounded disabled:opacity-40 transition-colors font-semibold"
           >
             {pushing ? '⏳' : '↑'} Push
@@ -339,15 +474,15 @@ export default function GitPanel() {
       </div>
 
       {/* ── Tab bar ── */}
-      <div className="flex border-b border-[#30363d] bg-[#0d1117] flex-shrink-0 overflow-x-auto">
+      <div className="flex border-b border-[#30363d] bg-[#111820] flex-shrink-0 overflow-x-auto px-1 py-1">
         {TABS.map(({ id, label }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`flex-shrink-0 px-3 py-1.5 text-[10px] transition-colors whitespace-nowrap
+            className={`flex-shrink-0 px-2.5 py-1 text-[10px] transition-colors whitespace-nowrap rounded-md
               ${tab === id
-                ? 'border-b-2 border-[#7c3aed] text-[#e6edf3]'
-                : 'text-[#8b949e] hover:text-[#e6edf3]'
+                ? 'bg-[#1f2937] text-[#e6edf3] border border-[#3d4b5f]'
+                : 'text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#161b22]'
               }`}
           >
             {label}
@@ -370,7 +505,7 @@ export default function GitPanel() {
               ) : allFiles.map(f => {
                 const { label, color, title } = statusMeta(f.xy);
                 return (
-                  <div key={f.path} className="flex items-center gap-1.5 py-1 px-1 rounded hover:bg-[#21262d] group">
+                  <div key={f.path} className="flex items-center gap-1.5 py-1.5 px-2 rounded-md border border-transparent hover:bg-[#1a232e] hover:border-[#30363d] group">
                     <input
                       type="checkbox"
                       checked={selected.has(f.path)}
@@ -381,6 +516,7 @@ export default function GitPanel() {
                       }}
                       className="accent-[#7c3aed] cursor-pointer flex-shrink-0"
                     />
+                    <span className="text-[#8b949e] w-4 text-center flex-shrink-0">{fileGlyph(f.path)}</span>
                     <span title={title} style={{ color }} className="font-mono w-3.5 text-center flex-shrink-0">{label}</span>
                     <button
                       onClick={() => loadDiff(f.path)}
@@ -400,11 +536,15 @@ export default function GitPanel() {
             </div>
 
             {/* Commit area */}
-            <div className="flex-shrink-0 border-t border-[#30363d] bg-[#0d1117] p-2 space-y-1.5">
+            <div className="flex-shrink-0 border-t border-[#30363d] bg-[#111820] p-2 space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] text-[#8b949e]">
+                <span>Summary</span>
+                <span>{allFiles.length} changed • {selected.size} selected</span>
+              </div>
               <textarea
                 value={commitMsg}
                 onChange={e => setCommitMsg(e.target.value)}
-                placeholder="Commit message…"
+                placeholder="Summary (required)"
                 rows={2}
                 className="w-full bg-[#161b22] border border-[#30363d] rounded text-xs text-[#e6edf3]
                   placeholder-[#484f58] px-2 py-1.5 resize-none focus:outline-none focus:border-[#7c3aed]"
@@ -436,6 +576,40 @@ export default function GitPanel() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ╔══ DESKTOP ══╗ */}
+        {tab === 'desktop' && (
+          <div className="flex flex-col h-full p-3 gap-3">
+            <section>
+              <p className="text-[#8b949e] uppercase tracking-wider mb-2">GitHub Desktop Actions</p>
+              <div className="grid grid-cols-2 gap-2">
+                <Btn onClick={doPublishBranch} disabled={desktopBusy}>Publish Branch</Btn>
+                <Btn onClick={doPullRebase} disabled={desktopBusy}>Pull Rebase</Btn>
+                <Btn onClick={doRebaseMain} disabled={desktopBusy}>Rebase on Main</Btn>
+                <Btn onClick={doAbortRebase} disabled={desktopBusy}>Abort Rebase</Btn>
+                <Btn onClick={doCopyPrLink} disabled={desktopBusy} className="col-span-2">Copy PR Link</Btn>
+              </div>
+              <p className="text-[#6e7681] mt-2">
+                Active branch: <span className="font-mono text-[#e6edf3]">{status?.branch || 'HEAD'}</span>
+              </p>
+            </section>
+
+            <section className="flex-1 min-h-0 flex flex-col">
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[#8b949e] uppercase tracking-wider">Operation Output</p>
+                <button
+                  onClick={() => setDesktopOut('No operations yet.')}
+                  className="text-[#79c0ff] hover:underline"
+                >
+                  Clear
+                </button>
+              </div>
+              <pre className="flex-1 min-h-0 overflow-auto bg-[#0b0f14] border border-[#30363d] rounded p-2 text-[#c9d1d9] whitespace-pre-wrap break-words font-mono text-[11px] leading-4">
+                {desktopOut}
+              </pre>
+            </section>
           </div>
         )}
 

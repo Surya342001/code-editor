@@ -2,7 +2,7 @@
 import useEditorStore from '../store/editorStore';
 
 export default function StatusBar() {
-  const { tabs, activeTabId, ollamaOnline, selectedModel, currentFolder, toggleTerminal } = useEditorStore();
+  const { tabs, activeTabId, ollamaOnline, selectedModel, currentFolder, toggleTerminal, aiTyping } = useEditorStore();
   const tab = tabs.find(t => t.id === activeTabId);
 
   return (
@@ -32,6 +32,12 @@ export default function StatusBar() {
           ⌨ terminal
         </button>
 
+        {aiTyping && (
+          <span className="flex items-center gap-1 text-yellow-200 animate-pulse" title="AI generating completion…">
+            <span className="w-2 h-2 rounded-full bg-yellow-300 animate-ping" />
+            AI…
+          </span>
+        )}
         <span
           className={`flex items-center gap-1 ${ollamaOnline ? 'text-green-300' : 'text-red-300'}`}
           title={ollamaOnline ? `Ollama: ${selectedModel}` : 'Ollama offline — install & run ollama serve'}

@@ -253,166 +253,148 @@ ipcMain.handle('terminal:kill',   (_, id)              => { ptyProcs[id]?.kill()
 // ─── IPC : Git ───────────────────────────────────────────────────────────────
 const { execFile } = require('child_process');
 
-function git(args, cwd) {
-  return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd, encoding: 'utf-8', maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err && !stdout.trim()) reject(new Error((stderr || err.message).trim()));
-      else resolve(stdout.trim());
+function runGitBridge(command, cwd, payload = {}) {
+  const scriptPath = path.join(__dirname, 'git_bridge.py');
+  const args = [scriptPath, command, '--cwd', cwd, '--payload', JSON.stringify(payload || {})];
+
+  const runWith = (bin) => new Promise((resolve, reject) => {
+    execFile(bin, args, { encoding: 'utf-8', maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err && err.code === 'ENOENT') {
+        reject(err);
+        return;
+      }
+
+      const out = (stdout || '').trim();
+      if (!out) {
+        resolve({ ok: false, error: (stderr || err?.message || 'Git bridge failed').trim() });
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(out);
+        resolve(parsed);
+      } catch (_) {
+        resolve({ ok: false, error: (stderr || 'Invalid git bridge response').trim() });
+      }
     });
   });
+
+  return runWith('python3').catch(() => runWith('python'));
 }
 
 ipcMain.handle('git:isRepo', async (_, dir) => {
-  try { await git(['rev-parse', '--git-dir'], dir); return true; }
-  catch { return false; }
+  const r = await runGitBridge('is_repo', dir);
+  return !!r.isRepo;
 });
 
 ipcMain.handle('git:status', async (_, dir) => {
-  try {
-    const raw    = await git(['status', '--porcelain', '-u'], dir);
-    const branch = await git(['branch', '--show-current'], dir).catch(() => 'HEAD');
-    const ahead  = await git(['rev-list', '--count', '@{u}..HEAD'], dir).catch(() => '0');
-    const behind = await git(['rev-list', '--count', 'HEAD..@{u}'], dir).catch(() => '0');
-    const files  = raw.split('\n').filter(Boolean).map(l => ({
-      xy: l.slice(0, 2), path: l.slice(3).trim()
-    }));
-    return { ok: true, branch, ahead: +ahead, behind: +behind, files };
-  } catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('status', dir);
 });
 
 ipcMain.handle('git:diff', async (_, dir, filePath) => {
-  try {
-    const unified = await git(filePath
-      ? ['diff', 'HEAD', '--', filePath]
-      : ['diff', 'HEAD'], dir).catch(() => '');
-    const staged = await git(['diff', '--cached',
-      ...(filePath ? ['--', filePath] : [])], dir).catch(() => '');
-    return { ok: true, diff: unified || staged || '(no diff)' };
-  } catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('diff', dir, { filePath: filePath || null });
 });
 
 ipcMain.handle('git:log', async (_, dir, n) => {
-  try {
-    const log = await git(['log', '--oneline', `--decorate`, `-${n || 15}`], dir);
-    return { ok: true, log };
-  } catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('log', dir, { n: n || 15 });
 });
 
 ipcMain.handle('git:stageAll', async (_, dir) => {
-  try { await git(['add', '-A'], dir); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('stage_all', dir);
 });
 
 ipcMain.handle('git:stage', async (_, dir, filePath) => {
-  try { await git(['add', filePath], dir); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('stage', dir, { filePath });
 });
 
 ipcMain.handle('git:unstage', async (_, dir, filePath) => {
-  try { await git(['restore', '--staged', filePath], dir); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('unstage', dir, { filePath });
 });
 
 ipcMain.handle('git:commit', async (_, dir, message) => {
-  try { await git(['commit', '-m', message], dir); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('commit', dir, { message });
 });
 
 ipcMain.handle('git:push', async (_, dir) => {
-  try { const out = await git(['push'], dir); return { ok: true, out }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('push', dir);
 });
 
 ipcMain.handle('git:discard', async (_, dir, filePath) => {
-  try {
-    await git(['checkout', '--', filePath], dir);
-    return { ok: true };
-  } catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('discard', dir, { filePath });
 });
 
 ipcMain.handle('git:init', async (_, dir) => {
-  try { await git(['init'], dir); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('init', dir);
 });
 
 ipcMain.handle('git:pull', async (_, dir) => {
-  try { const out = await git(['pull'], dir); return { ok: true, out }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('pull', dir);
 });
 
 ipcMain.handle('git:fetch', async (_, dir) => {
-  try { const out = await git(['fetch', '--all', '--prune'], dir); return { ok: true, out }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('fetch', dir);
+});
+
+ipcMain.handle('git:syncMain', async (_, dir) => {
+  return runGitBridge('sync_main', dir);
+});
+
+ipcMain.handle('git:publishBranch', async (_, dir) => {
+  return runGitBridge('publish_branch', dir);
+});
+
+ipcMain.handle('git:pullRebase', async (_, dir) => {
+  return runGitBridge('pull_rebase', dir);
+});
+
+ipcMain.handle('git:rebaseMain', async (_, dir) => {
+  return runGitBridge('rebase_main', dir);
+});
+
+ipcMain.handle('git:abortRebase', async (_, dir) => {
+  return runGitBridge('abort_rebase', dir);
+});
+
+ipcMain.handle('git:prUrl', async (_, dir, branch, remote) => {
+  return runGitBridge('pr_url', dir, { branch, remote });
 });
 
 ipcMain.handle('git:branches', async (_, dir) => {
-  try {
-    const localRaw  = await git(['branch'], dir).catch(() => '');
-    const remoteRaw = await git(['branch', '-r'], dir).catch(() => '');
-    const branches  = localRaw.split('\n').filter(Boolean).map(l => ({
-      name:    l.replace('*', '').trim(),
-      current: l.trim().startsWith('*'),
-    }));
-    const remotes = remoteRaw.split('\n')
-      .filter(l => l.trim() && !l.includes('HEAD ->'))
-      .map(l => l.trim());
-    return { ok: true, branches, remotes };
-  } catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('branches', dir);
 });
 
 ipcMain.handle('git:createBranch', async (_, dir, name) => {
-  try { await git(['checkout', '-b', name], dir); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('create_branch', dir, { name });
 });
 
 ipcMain.handle('git:switchBranch', async (_, dir, name) => {
-  try { await git(['checkout', name], dir); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('switch_branch', dir, { name });
 });
 
 ipcMain.handle('git:deleteBranch', async (_, dir, name, force) => {
-  try { await git(['branch', force ? '-D' : '-d', name], dir); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('delete_branch', dir, { name, force: !!force });
 });
 
 ipcMain.handle('git:stash', async (_, dir, msg) => {
-  try {
-    const args = msg ? ['stash', 'push', '-u', '-m', msg] : ['stash', 'push', '-u'];
-    await git(args, dir);
-    return { ok: true };
-  } catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('stash', dir, { message: msg || '' });
 });
 
 ipcMain.handle('git:stashPop', async (_, dir) => {
-  try { await git(['stash', 'pop'], dir); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('stash_pop', dir);
 });
 
 ipcMain.handle('git:stashDrop', async (_, dir, index) => {
-  try { await git(['stash', 'drop', `stash@{${index}}`], dir); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('stash_drop', dir, { index });
 });
 
 ipcMain.handle('git:stashList', async (_, dir) => {
-  try {
-    const out = await git(['stash', 'list'], dir).catch(() => '');
-    return { ok: true, stashes: out.split('\n').filter(Boolean) };
-  } catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('stash_list', dir);
 });
 
 ipcMain.handle('git:remotes', async (_, dir) => {
-  try {
-    const out = await git(['remote', '-v'], dir).catch(() => '');
-    const map = {};
-    out.split('\n').filter(Boolean).forEach(l => {
-      const [name, rest] = l.split('\t');
-      if (name && !map[name]) map[name] = (rest || '').split(' ')[0];
-    });
-    return { ok: true, remotes: Object.entries(map).map(([name, url]) => ({ name, url })) };
-  } catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('remotes', dir);
 });
 
 ipcMain.handle('git:addRemote', async (_, dir, name, url) => {
-  try { await git(['remote', 'add', name, url], dir); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  return runGitBridge('add_remote', dir, { name, url });
 });

@@ -1,16 +1,17 @@
 import { useEffect } from 'react';
-import ActivityBar    from './components/ActivityBar';
-import FileExplorer   from './components/Sidebar/FileExplorer';
-import SearchPanel    from './components/Sidebar/SearchPanel';
-import EditorArea     from './components/Editor/EditorArea';
-import AIPanel        from './components/AI/AIPanel';
-import InlineDiff     from './components/AI/InlineDiff';
-import StatusBar      from './components/StatusBar';
-import CommandPalette from './components/CommandPalette';
-import Toasts         from './components/Toasts';
-import useEditorStore from './store/editorStore';
-import useProjectIndex from './store/projectIndex';
-import useRagStore    from './store/ragStore';
+import ActivityBar        from './components/ActivityBar';
+import FileExplorer       from './components/Sidebar/FileExplorer';
+import SearchPanel        from './components/Sidebar/SearchPanel';
+import KnowledgeGraphPanel from './components/KnowledgeGraph/KnowledgeGraphPanel';
+import EditorArea         from './components/Editor/EditorArea';
+import AIPanel            from './components/AI/AIPanel';
+import InlineDiff         from './components/AI/InlineDiff';
+import StatusBar          from './components/StatusBar';
+import CommandPalette     from './components/CommandPalette';
+import Toasts             from './components/Toasts';
+import useEditorStore     from './store/editorStore';
+import useProjectIndex    from './store/projectIndex';
+import useRagStore        from './store/ragStore';
 
 const OLLAMA = 'http://localhost:11434';
 
@@ -92,6 +93,7 @@ export default function App() {
           >
             {activePanel === 'explorer' && <FileExplorer />}
             {activePanel === 'search'   && <SearchPanel />}
+            {activePanel === 'graph'    && <KnowledgeGraphPanel />}
           </aside>
         )}
 

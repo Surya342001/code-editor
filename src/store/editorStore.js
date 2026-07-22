@@ -201,9 +201,11 @@ const useEditorStore = create((set, get) => ({
   ollamaModels: [],
   selectedModel: 'llama3',
   ollamaOnline: false,
+  aiTyping: false,          // true while inline completion is fetching
   setOllamaModels: (models) => set({ ollamaModels: models }),
   setSelectedModel: (m) => set({ selectedModel: m }),
   setOllamaOnline: (v) => set({ ollamaOnline: v }),
+  setAITyping: (v) => set({ aiTyping: v }),
 
   // ── Inline AI query (from editor selection → AI Panel) ────────────────
   pendingAIQuery: null,    // { text, context } sent from CodeEditor to AIPanel
